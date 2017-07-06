@@ -168,34 +168,6 @@ def _check_n_gridpoints(n):
     return n
 
 
-def laplacian(c, n, L=None, diff_multiplier=None):
-    """
-    Compute Laplacian of flattened concentration array.
-
-    Parameters
-    ----------
-    c : nd_array, shape (n[0]*n[1], )
-        Flattened array of concentrations.
-    n : 2-tuple of ints
-        n[0] is the number of rows of differencing grid.
-        n[1] is the number of columns of differencing grid.
-    L : 2-tuple of floats, or None (default)
-        L[0] is the physical height of the domain (the y-direction).
-        L[1] is the physical height of the domain (the y-direction).
-        If None, L[0] = L[1] = 2*pi.
-    diff_multiplier : array_like, shape n, or None
-        Multiplier to use in spectral differentiation. If None,
-        this is calculated on an interval of length L = [Lx, Ly].
-
-    Returns
-    -------
-    output : nd_array, shape(n[0]*n[1], )
-        Flattened Laplacian of the concentration.
-    """
-    return np.sum(utils.diff_periodic_fft_2d(c.reshape(n), order=2,
-                  L=L, diff_multiplier=diff_multiplier)).flatten()
-
-
 def dc_dt(c, t, D, n, beta=None, gamma=None, f=None, f_args=(), L=None,
           diff_multiplier=None):
     """
