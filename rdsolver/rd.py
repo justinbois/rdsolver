@@ -64,12 +64,10 @@ def _update_beta(beta, n):
     if beta is None:
         return None
 
-    # Convert scalar to array
+    # Convert to array of floats
     if np.isscalar(beta):
-        beta = np.array([beta])
-
-    # Make sure they're floats
-    beta = beta.astype(float)
+        beta = [beta]
+    beta = np.array(beta, dtype=float)
 
     return np.concatenate([np.array([beta_i] * n[0]*n[1]) for beta_i in beta])
 
@@ -81,7 +79,7 @@ def _update_gamma(gamma, n):
 
     Parameters
     ----------
-    gamme : nd_array or None
+    gamma : nd_array or None
         If not None, array of autogrowth rate constants for each
         chemical species.
     n : 2-tuple of ints
@@ -168,10 +166,28 @@ def _check_n_gridpoints(n):
     return n
 
 
-def dc_dt(c, t, D, n, beta=None, gamma=None, f=None, f_args=(), L=None,
-          diff_multiplier=None):
+def dc_dt(c, t, D, n_species, n, beta=None, gamma=None, f=None, f_args=(),
+          L=None, diff_multiplier=None):
     """
     Right hand side of R-D dynamics in real space.
+
+    Parameters
+    ----------
+    c : ndarray, shape(n_species * n[0] * n[1], )
+        Flattened array of concentrations
+    t : float
+        Time
+    D : array_like
+        Array of diffusion coefficients for species.
+    n : 2-tuple of ints
+        n[0] is the number of rows of differencing grid.
+        n[1] is the number of columns of differencing grid.
+    beta : array_like, shape is same as c
+
+    f : function
+        Function to compute the nonlinear terms of the dynamics.
+        Call signature f(c, t, *f_args), where c[0] is concentration
+        of species 0, c[1] is concentration of species 2, etc.
     """
     rhs = np.zeros_like(c)
     n_tot = n[0] * n[1]
@@ -191,43 +207,11 @@ def dc_dt(c, t, D, n, beta=None, gamma=None, f=None, f_args=(), L=None,
         rhs += gamma * c
 
     if f is not None:
-        rhs += f(c.reshape((len(c) // n_tot, n_tot)), t, *f_args).flatten()
+        rhs += f(c.reshape((n_species, n_tot)), t, *f_args).flatten()
 
     return rhs
 
 
-# ##################
-# ALL FUNCTIONS BELOW NOT YET WORKING
-# ##################
-
-def nonlinear_terms(c, rnl, n_species, rnl_args=()):
-    """
-    Parameters
-    ----------
-    c : array_like, shape (n_species * nx * ny, )
-        Concentrations at a given time point. Organized where
-        first len(c)/n_species entries are flattened array of
-        concentrations of first chemical species, next
-        len(c)/n_species for for second chemical species, and
-        so on.
-    rnl : function, rnl(c1, c2, ..., *rnl_args)
-        Return the nonlinear terms of the dynamics. The first k
-        arguments are the concentrations of teh k different species.
-        These may be arrays, all with the same shape. The remaining
-        arguments are parameters used in the calculation. This function
-        returns an n_species-tuple with the nonlinear terms for the
-        dynamics of each species.
-    rnl_args : tuple, default empty tuple
-        Arguments to pass to rnl.
-
-    Returns
-    -------
-    output : array_like
-
-    """
-
-    nl_terms = rnl(*c.reshape((n_species, len(c)//n_species)), *rnl_args)
-    return np.concatenate(nl_terms)
 
 
 def imex_2d(c0, t, dt, f_hat, f_hat0, c_hat, D, rl, k2):
