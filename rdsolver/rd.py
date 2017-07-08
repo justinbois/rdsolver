@@ -13,33 +13,74 @@ import numpy as np
 from . import utils
 
 
-def _check_and_update_inputs(D, n, beta, gamma, f_args, L):
+def _check_and_update_inputs(c0, L, D, beta, gamma, f_args):
     """
     Check inputs and update parameters for convenient use.
     """
 
-    # Make sure beta, gamma, and D are all arrays
+    # Use initial concentrations to get problem dimensions
+    c0, n_species, n = _check_and_update_c0(c0)
+
+    # Make sure beta, gamma, and D are all arrays or None
     if np.isscalar(D):
-        beta = np.array([D])
+        D = np.array([D])
 
     if np.isscalar(beta):
         beta = np.array([beta])
 
     if np.isscalar(gamma):
-        beta = np.array([gamma])
+        gamma = np.array([gamma])
 
-    if not (len(D) == len(beta) == len(gamma)):
-        raise RuntimeError('D, beta, and gamma must all be the same length.')
+    # Make sure arrays have proper length
+    if D is not None and len(D) != n_species:
+        raise RuntimeError('len(D) must equal c0.shape[0].')
+
+    if beta is not None and len(beta) != n_species:
+        raise RuntimeError('len(beta) must equal c0.shape[0].')
+
+    if gamma is not None and len(gamma) != n_species:
+        raise RuntimeError('len(gamma) must equal c0.shape[0].')
 
     # Perform further checks and updates
-    D = _check_D(D)
     n = _check_n_gridpoints(n)
+    D = _check_D(D)
     beta = _update_beta(beta, n)
     gamma = _update_gamma(gamma, n)
     f_args = _check_f_args(f_args)
     L = _check_L(L)
 
-    return D, n, beta, gamma, f_args, L
+    return c0, n_species, n, L, D, beta, gamma, f_args
+
+
+def _check_and_update_c0(c0):
+    """
+    Check c0 and convert to flattened array.
+    """
+
+    # Convert to Numpy array in case it's a list of lists or something
+    c0 = np.array(c0)
+
+    # Convert to 3D array for single species
+    if len(c0.shape) == 2:
+        c0 = np.array([c0])
+
+    if len(c0.shape) != 3:
+        raise RuntimeError('c0 must be an n_species by nx by ny numpy array')
+
+    # Make sure all concentrations are nonnegative
+    if (c0 < 0).any():
+        raise RuntimeError('All entries in c0 must be nonnegative.')
+
+    # Determine number of species.
+    n_species = c0.shape[0]
+
+    # Extract number of grid points
+    n = tuple(c0.shape[1:])
+
+    # Flatten c0
+    c0 = c0.flatten()
+
+    return c0, n_species, n
 
 
 def _update_beta(beta, n):
@@ -122,16 +163,21 @@ def _check_f_args(f_args):
     if type(f_args) in [list, np.ndarray]:
         return tuple(f_args)
 
+    return f_args
 
-def _check_D(n):
+
+def _check_D(D):
     """
     Check diffusion coefficient.
     """
 
+    if D is None:
+        return None
+
     if np.isscalar(D):
         D = np.array([D])
 
-    # Number of grid points must be tuple of ints
+    # Make sure it's a numpy array
     if type(D) in [list, tuple]:
         D = np.array(D)
 
@@ -153,7 +199,7 @@ def _check_n_gridpoints(n):
         n = tuple(n)
 
     if type(n) != tuple or len(n) != 2:
-        raise Runtimerror('`n` must be a 2-tuple.')
+        raise RuntimeError('`n` must be a 2-tuple.')
 
     # Make sure the number of grid points are ints
     if type(n[0]) != int or type(n[1]) != int:
@@ -166,7 +212,7 @@ def _check_n_gridpoints(n):
     return n
 
 
-def dc_dt(c, t, D, n_species, n, beta=None, gamma=None, f=None, f_args=(),
+def dc_dt(c, t, n_species, n, D=None, beta=None, gamma=None, f=None, f_args=(),
           L=None, diff_multiplier=None):
     """
     Right hand side of R-D dynamics in real space.
@@ -193,11 +239,12 @@ def dc_dt(c, t, D, n_species, n, beta=None, gamma=None, f=None, f_args=(),
     n_tot = n[0] * n[1]
 
     # Compute diffusive terms
-    for i, d in enumerate(D):
-        i0 = i * n_tot
-        i1 = (i+1) * n_tot
-        rhs[i0:i1] += d * utils.laplacian_flat_periodic_2d(c[i0:i1], n, L=None,
-                                                           diff_multiplier=None)
+    if D is not None:
+        for i, d in enumerate(D):
+            i0 = i * n_tot
+            i1 = (i+1) * n_tot
+            rhs[i0:i1] += d * utils.laplacian_flat_periodic_2d(
+                        c[i0:i1], n, L=L, diff_multiplier=diff_multiplier)
 
     # Add reaction terms
     if beta is not None:
@@ -212,105 +259,168 @@ def dc_dt(c, t, D, n_species, n, beta=None, gamma=None, f=None, f_args=(),
     return rhs
 
 
-
-
-def imex_2d(c0, t, dt, f_hat, f_hat0, c_hat, D, rl, k2):
+def solve(c0, t, L=None, D=None, beta=None, gamma=None, f=None, f_args=()):
     """
-    Does Adams-Bashforth/Crank-Nicholson integration of ARDA object.
+    Solve a reaction-diffusion system in two-dimensions.
+    """
+    # Check and convert inputs
+    c0, n_species, n, L, D, beta, gamma, f_args = \
+                _check_and_update_inputs(c0, L, D, beta, gamma, f_args)
+
+    # Compute square of wave numbers
+    kx, ky = utils.wave_numbers_2d(n, L=L)
+    k2 = (kx**2 + ky**2).flatten()
+
+    # Differencing multiplier for Laplacian
+    diff_multiplier = diff_multiplier_periodic_2d(n, order=2)
+
+    # Solving using VSIMEX
+    return vsimex_2d(
+        time_points, n_species, n, D=D, beta=beta, gamma=gamma,
+        f=f, f_args=f_args, L=L, diff_multiplier=diff_multiplier, dt0=1e-6)
+
+
+def vsimex_2d(time_points, n_species, n, D=None, beta=None, gamma=None, f=None,
+              f_args=(), L=None, diff_multiplier=None, dt0=1e-6,
+              dt_bounds=(0.000001, 100.0), allow_negative=False,
+              vsimex_tol=0.001, vsimex_tol_buffer=0.01, k_P=0.075, k_I=0.175,
+              k_D=0.01, s_bounds=(0.1, 10.0)):
+    """
+    Does adaptive step size Adams-Bashforth/Crank-Nicholson
+    integration.
     """
 
-    rkf45_time_points = np.array([arda.time_points[0],
-                                  arda.time_points[0] + dt / 2.0,
-                                  arda.time_points[0] + dt])
-    rkf45_output = utils.rkf45(
-        arda.time_deriv, c0, rkf45_time_points,
-        args=(arda,), dt=arda.dt / 10.0)
+    # Total number of grid points
+    n_tot = n[0] * n[1]
+
+    # Tiny concentration
+    tiny_conc = 1e-9
+
+    # Do Runge-Kutta-Fehlberg to get to first few time points
+    dt = tuple([dt0]*3)
+    rkf45_time_points = np.array([time_points[0],
+                                  time_points[0] + dt[0],
+                                  time_points[0] + dt[0] + dt[1]])
+    args = (n_species, n, D, beta, gamma, f, f_args=(), L, diff_multiplier)
+    rkf45_output = utils.rkf45(dc_dt, c0, rkf45_time_points, args=args,
+                               dt=dt[0]/10)
 
     # Initialize previous steps from solution
-    u = (rkf45_output[:,0], rkf45_output[:,-1])
+    u = (rkf45_output[:,-2], rkf45_output[:,-1])
+
+    # Initialize the relative change from the time steps
+    rel_change = (np.linalg.norm(u[1] - u[0]) / np.linalg.norm(u[1]),
+                  np.linalg.norm(u[0] - c0) / np.linalg.norm(u[0]))
 
     # Pull out concentrations and compute FFTs
-    c = ([None for i in xrange(arda.n_species)],
-         [None for i in xrange(arda.n_species)])
-    c_hat = ([None for i in xrange(arda.n_species)],
-             [None for i in xrange(arda.n_species)])
-    if arda.n_species > 0:
-        if arda.nematic:
-            start_ind = 2
-        else:
-            start_ind = 0
-        for i in xrange(arda.n_species):
-            i0 = arda.na_x * arda.na_y * (i + start_ind)
-            i1 = i0 + arda.na_x * arda.na_y
-            c[0][i] = \
-                arda.initial_condition[i0:i1].reshape((arda.na_y, arda.na_x))
-            c[1][i] = u[1][i0:i1].reshape((arda.na_y, arda.na_x))
-            c_hat[0][i] = fft2(c[0][i])
-            c_hat[1][i] = fft2(c[1][i])
-
+    c = tuple(u_entry.reshape((n_species, *n)) for u_entry in u)
+    c_hat = tuple(np.fft.fftn(c_entry, axes=(1,2)) for c_entry in c)
 
     # Compute initial f_hat
-    if arda.nematic:
-        f_hat = (arda.nonlin_fun(Q_tilde[0], q[0], Q_tilde_hat[0], q_hat[0],
-                                 c[0], arda.time_points[0], arda),
-                 arda.nonlin_fun(Q_tilde[1], q[1], Q_tilde_hat[1], q_hat[1],
-                                 c[1], arda.time_points[0] + arda.dt, arda))
-    else:
-        f_hat = (arda.nonlin_fun(c[0], arda.time_points[0], arda),
-                 arda.nonlin_fun(c[1], arda.time_points[0] + arda.dt, arda))
+    f_hat = (np.fft.fft2(f(c[0], time_points[0] + dt[0], *f_args)),
+             np.fft.fft2(f(c[1], time_points[0] + dt[0] + dt[1], *f_args)))
 
     # Set up return variables
-    u_sol = [arda.initial_condition]
-    t = arda.time_points[0] + arda.dt
-    t_sol = [arda.time_points[0]]
-    i_max = len(arda.time_points)
+    u_sol = [c0]
+    t = time_points[0] + dt[0] + dt[1]
+    t_sol = [time_points[0]]
     i = 1
+    omega = 1.0
 
     # Take the time steps
-    while i < i_max:
-        while t < arda.time_points[i]:
-            c_hat_step = \
-                stepper(arda, arda.dt, 1.0, f_hat, c_hat)
+    while t < time_points[-1]:
+        next_time_point_index = np.searchsorted(time_points, t)
+        while t < time_points[next_time_point_index]:
+            omega = dt[2] / dt[1]
 
-            # Update hat variable
-            c_hat = (c_hat[1], c_hat_step)
+            # THIS IS WHERE THE CNAB2 STEP IS
+            c_hat_step = cnab2_step()
 
-            # Update real space variables
-            c = (c[1], [None] * arda.n_species)
-            for j in xrange(arda.n_species):
-                c[1][j] = ifft2(c_hat_step[j]).real
+            # Convert to real space and build u_step
+            c_step = np.fft.ifftn(c_hat_step, axes=(1, 2)).real
+            u_step = c_step.flatten()
 
-            # Increment
-            t += arda.dt
-            f_hat = (f_hat[1], arda.nonlin_fun(c[1], t, arda))
+            # Check to make sure there are no negative concentrations
+            if not allow_negative and (u_step < 0.0).any():
+                print 'NEGATIVE CONC, ', dt
+                # If we can't reduce step size any more
+                if dt[2] <= dt_bounds[0]:
+                    c_step[np.nonzero(c_step[j] < 0.0)] = tiny_conc
+                    c_hat_step = np.fft.fftn(c_step, axis=(1, 2))
+                    u_step = c_step.flatten()
+                    reject_step=False
+                    print ' NEGATIVE CONC, ZEROED OUT, TAKING TINY STEP '
+                else:  # Cut step size by 2
+                    dt = (dt[0], dt[1], min(dt[2] / 2.0, dt_bounds[0]))
+                    reject_step = True
+                    print ' REDUCING STEP SIZE '
+            else:
+                reject_step = False
 
+            # Compute the relative change
+            rel_change_step = np.linalg.norm(u_step - u[1]) / \
+                                                np.linalg.norm(u_step)
+
+            # If relative change less than tolerance, take step
+            if not reject_step \
+                and (rel_change_step <= vsimex_tol * (1.0 + vsimex_tol_buffer)
+                     or dt[2] <= dt_bounds[0]):
+                # Take the step
+                c_hat = (c_hat[1], c_hat_step)
+                c = (c[1], c_step)
+                u = (u[1], u_step)
+                t += dt[2]
+                f_hat = (f_hat[1], np.fft.fft2(f(c[1], t, *f_args)))
+
+                # Adjust step size
+                mult = (rel_change[1] / rel_change_step)**k_P \
+                     * (vsimex_tol / rel_change_step)**k_I \
+                     * (rel_change[0]**2 / rel_change[1] / rel_change_step)**k_D
+                if mult > s_bounds[1]:
+                    mult = s_bounds[1]
+                elif mult < s_bounds[0]:
+                    mult = s_bounds[0]
+
+                new_dt = mult * dt[2]
+
+                if new_dt > dt_bounds[1]:
+                    new_dt = dt_bounds[1]
+                elif new_dt < dt_bounds[0]:
+                    new_dt = dt_bounds[0]
+
+                dt = (dt[1], dt[2], new_dt)
+                rel_change = (rel_change[1], rel_change_step)
+            elif not reject_step:
+                mult = vsimex_tol / rel_change_step
+                if mult < s_bounds[0]:
+                    mult = s_bounds[0]
+
+                new_dt = mult * dt[2]
+
+                if new_dt < dt_bounds[0]:
+                    new_dt = dt_bounds[0]
+
+                dt = (dt[0], dt[1], new_dt)
+
+        # If the solution blew up, raise an exception
+        if np.isnan(u[1]).any() != 0:
+            raise RuntimeError('Solution blew up!')
+
+        # Store outputs
         t_sol.append(t)
 
-        # Pull out current solution and flatten for output
-        if arda.nematic:
-            u = np.empty((2 + arda.n_species) * arda.na_x * arda.na_y)
-            u[:arda.na_x*arda.na_y] = Q_tilde[1].flatten()
-            u[arda.na_x*arda.na_y:2*arda.na_x*arda.na_y] = q[1].flatten()
-            for j in xrange(arda.n_species):
-                i0 = arda.na_x * arda.na_y * (j + 2)
-                i1 = i0 + arda.na_x * arda.na_y
-                u[i0:i1] = c[1][j].flatten()
-        else: # Isotropic
-            u = np.empty(arda.n_species * arda.na_x * arda.na_y)
-            for j in xrange(arda.n_species):
-                i0 = arda.na_x * arda.na_y * j
-                i1 = i0 + arda.na_x * arda.na_y
-                u[i0:i1] = c[1][j].flatten()
+        u_out = np.empty(n_species * n_tot)
+        for j in xrange(n_species):
+            i0 = n_tot * j
+            i1 = i0 + n_tot
+            u_out[i0:i1] = c[1][j].flatten()
 
-        if np.isnan(u).any() != 0:
-            raise ValueError('Solution blew up! Try reducing dt.')
-
-        u_sol.append(u)
+        u_sol.append(u_out)
         i += 1
 
     # Interpolate solution
     return ode.ode_int.interpolate_solution(
-        np.array(u_sol).transpose(), np.array(t_sol), arda.time_points)
+        np.array(u_sol).transpose(), np.array(t_sol), time_points)
 
 
 def cnab2_step(dt_current, dt0, f_hat, f_hat0, c_hat, D, rl, k2):

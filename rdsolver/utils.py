@@ -89,6 +89,62 @@ def grid_points_2d(n, L=None, x_start=(0.0, 0.0)):
 
     return x, y, xx, yy, x_grid, y_grid
 
+def wave_numbers_1d(n, L=None):
+    """
+    Compute the wave numbers corresponding to FFT.
+
+    Parameters
+    ----------
+    n : int
+        Number of grid points
+    L : float, default 2*pi
+        The physical extent of the domain.
+
+    Returns
+    -------
+    output : ndarray, shape (n, )
+        The wave numbers for the FFT.
+    """
+
+    if L is None:
+        L = 2.0 * np.pi
+
+    if L is None:
+        L = 2.0 * np.pi
+
+    return np.fft.fftfreq(n, L / (2 * np.pi * n))
+
+
+def wave_numbers_2d(n, L=None):
+    """
+    Compute the wave numbers corresponding to FFT.
+
+    Parameters
+    ----------
+    n : 2-tuple of ints
+        n[0] is the number of rows of differencing grid.
+        n[1] is the number of columns of differencing grid.
+    L : 2-tuple of floats, or None (default)
+        L[0] is the physical height of the domain (the y-direction).
+        L[1] is the physical height of the domain (the y-direction).
+        If None, L[0] = L[1] = 2*pi.
+
+    Returns
+    -------
+    kx : ndarray, shape n
+        The x-wave numbers for the appropriate FFT.
+    ky : ndarray, shape n
+        The y-wave numbers for the appropriate FFT.
+    """
+
+    if L is None:
+        L = (2*np.pi, 2*np.pi)
+
+    kx = wave_numbers_1d(n[0], L=L[0])
+    ky = wave_numbers_1d(n[1], L=L[1])
+
+    return np.meshgrid(kx, ky, indexing='ij')
+
 
 def diff_multiplier_periodic_1d(n, order=1):
     """
@@ -236,6 +292,17 @@ def laplacian_flat_periodic_2d(f, n, L=None, diff_multiplier=None):
                                       L=L, diff_multiplier=diff_multiplier)
     return (dfdx + dfdy).flatten()
 
+
+def flat_to_3d(c_flat, n_species, n):
+    """
+    Convert flat array of concentrations to 3D array.
+
+    Parameters
+    ----------
+    c_flat : array_like, shape (n_species*n[0]*n[1])
+        Flattened array of concentrations
+    n_species : 
+    """
 
 def rkf45_step(f, y, t, args, h, tol):
     """

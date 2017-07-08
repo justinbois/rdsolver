@@ -26,7 +26,7 @@ def test_update_beta():
     assert (rdsolver.rd._update_beta((2, 3), n) == correct).all()
 
 
-def test_update_gammaa():
+def test_update_gamma():
     # Only one
     n = (10, 9)
     correct = np.array([2.0]*90)
@@ -47,6 +47,50 @@ def test_update_gammaa():
     correct = np.array([2.0]*90 + [3.0]*90)
     assert (rdsolver.rd._update_gamma((2, 3), n) == correct).all()
 
+def test_check_and_update_inputs():
+    # Single species, 2D array
+    c0 = np.array([[1, 2, 3, 4], [5, 6, 7, 8]])
+    correct_c0 = np.array([1, 2, 3, 4, 5, 6, 7, 8])
+    D = None
+    L = None
+    beta = None
+    gamma = None
+    f_args = ()
+    c0, n_species, n, L, D, beta, gamma, f_args = \
+        rdsolver.rd._check_and_update_inputs(c0, L, D, beta, gamma, f_args)
+    assert (correct_c0 == c0).all()
+    assert n_species == 1
+    assert n == (2, 4)
+    assert type(L) == tuple \
+                and np.isclose(np.array(L), 2 * np.pi * np.ones(2)).all()
+    assert beta is None
+    assert gamma is None
+    assert f_args == ()
+
+    # Two species
+    c0_0 = np.array([[1, 2, 3, 4], [5, 6, 7, 8]])
+    c0_1 = np.array([[9, 10, 11, 12], [13, 14, 15, 16]])
+    c0 = np.stack((c0_0, c0_1))
+    correct_c0 = np.array([1, 2, 3, 4, 5, 6, 7, 8,
+                           9, 10, 11, 12, 13, 14, 15, 16])
+    D = None
+    L = None
+    beta = None
+    gamma = None
+    f_args = ()
+    c0, n_species, n, L, D, beta, gamma, f_args = \
+        rdsolver.rd._check_and_update_inputs(c0, L, D, beta, gamma, f_args)
+    assert (correct_c0 == c0).all()
+    assert n_species == 2
+    assert n == (2, 4)
+    assert type(L) == tuple \
+                and np.isclose(np.array(L), 2 * np.pi * np.ones(2)).all()
+    assert beta is None
+    assert gamma is None
+    assert f_args == ()
+
+
+
 def test_dc_dt():
     # Even concentration field, two species, no rxns
     n = (6, 6)
@@ -54,7 +98,7 @@ def test_dc_dt():
     L = None
     c = np.ones(72)
     t = 0
-    assert np.isclose(0, rd.dc_dt(c, t, D, 1, n)).all()
+    assert np.isclose(0, rd.dc_dt(c, t, 2, n, D)).all()
 
     # No diffusion, uniform concentration field, simple decay
     n = (4, 4)
@@ -64,7 +108,7 @@ def test_dc_dt():
     c = np.ones(16)
     t = 0
     rxn_args = ()
-    assert np.isclose(-c, rd.dc_dt(c, t, D, 1, n, gamma=gamma)).all()
+    assert np.isclose(-c, rd.dc_dt(c, t, 1, n, D, gamma=gamma)).all()
 
     # No reactions, nonuniform concentration field
     n = (64, 64)
@@ -76,7 +120,7 @@ def test_dc_dt():
     laplacian = c * np.cos(yy) * (np.cos(xx)**2 * np.cos(yy) - np.sin(xx)) \
               + c * np.sin(xx) * (np.sin(yy)**2 * np.sin(xx) - np.cos(yy))
     correct = D[0] * laplacian
-    assert np.isclose(correct, rd.dc_dt(c, t, D, 1, n)).all()
+    assert np.isclose(correct, rd.dc_dt(c, t, 1, n, D)).all()
 
     # Simple decay, nonuniform concentration field
     n = (64, 64)
@@ -89,7 +133,7 @@ def test_dc_dt():
     laplacian = c * np.cos(yy) * (np.cos(xx)**2 * np.cos(yy) - np.sin(xx)) \
               + c * np.sin(xx) * (np.sin(yy)**2 * np.sin(xx) - np.cos(yy))
     correct = D[0] * laplacian - c
-    assert np.isclose(correct, rd.dc_dt(c, t, D, 1, n, gamma=gamma)).all()
+    assert np.isclose(correct, rd.dc_dt(c, t, 1, n, D, gamma=gamma)).all()
 
     # Simple decay, nonuniform concentration field, different # of grid points
     n = (64, 128)
@@ -102,7 +146,7 @@ def test_dc_dt():
     laplacian = c * np.cos(yy) * (np.cos(xx)**2 * np.cos(yy) - np.sin(xx)) \
               + c * np.sin(xx) * (np.sin(yy)**2 * np.sin(xx) - np.cos(yy))
     correct = D[0] * laplacian - c
-    assert np.isclose(correct, rd.dc_dt(c, t, D, 1, n, gamma=gamma)).all()
+    assert np.isclose(correct, rd.dc_dt(c, t, 1, n, D, gamma=gamma)).all()
 
     # decay+prod., nonuniform concentration field, different # of grid points
     n = (64, 128)
@@ -117,7 +161,7 @@ def test_dc_dt():
               + c * np.sin(xx) * (np.sin(yy)**2 * np.sin(xx) - np.cos(yy))
     correct = D[0] * laplacian - c + 1.4
     assert np.isclose(correct,
-                      rd.dc_dt(c, t, D, 1, n, gamma=gamma, beta=beta)).all()
+                      rd.dc_dt(c, t, 1, n, D, gamma=gamma, beta=beta)).all()
 
 
     # Inclusion of nonlinear terms
@@ -135,7 +179,7 @@ def test_dc_dt():
               + c * np.sin(xx) * (np.sin(yy)**2 * np.sin(xx) - np.cos(yy))
     correct = D[0] * laplacian - c + 1.4 - c**2
     assert np.isclose(correct,
-                     rd.dc_dt(c, t, D, 1, n, gamma=gamma, beta=beta, f=f)).all()
+                     rd.dc_dt(c, t, 1, n, D, gamma=gamma, beta=beta, f=f)).all()
 
     # Inclusion of nonlinear terms, multiple species
     n = (64, 128)
@@ -162,5 +206,5 @@ def test_dc_dt():
     correct_b = D[1] * laplacian_1 - 0.5 * b + 1.0 + 5.6 * a**2 * b
     correct = np.concatenate((correct_a, correct_b))
     assert np.isclose(correct,
-                      rd.dc_dt(c, t, D, 2, n, gamma=gamma, beta=beta, f=f,
+                      rd.dc_dt(c, t, 2, n, D, gamma=gamma, beta=beta, f=f,
                       f_args=f_args)).all()

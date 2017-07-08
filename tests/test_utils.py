@@ -117,6 +117,60 @@ def test_grid_points_2d():
     assert np.isclose(yy, correct_yy).all()
 
 
+def test_wave_numbers_1d():
+    # 2π domain length
+    correct = np.array([0, 1, 2, -3, -2, -1])
+    assert (correct == rd.utils.wave_numbers_1d(6)).all()
+
+    # Other domain lengths
+    L = 1
+    correct = np.array([0, 1, 2, -3, -2, -1]) * (2 * np.pi / L)
+    assert (correct == rd.utils.wave_numbers_1d(6, L=L)).all()
+
+    L = 7.89
+    correct = np.array([0, 1, 2, -3, -2, -1]) * (2 * np.pi / L)
+    assert (correct == rd.utils.wave_numbers_1d(6, L=L)).all()
+
+    # Odd domains
+    correct = np.array([0, 1, 2, 3, -3, -2, -1])
+    assert (correct == rd.utils.wave_numbers_1d(7)).all()
+
+    L = 1
+    correct = np.array([0, 1, 2, 3, -3, -2, -1]) * (2 * np.pi / L)
+    assert (correct == rd.utils.wave_numbers_1d(7, L=L)).all()
+
+    L = 7.89
+    correct = np.array([0, 1, 2, 3, -3, -2, -1]) * (2 * np.pi / L)
+    assert (correct == rd.utils.wave_numbers_1d(7, L=L)).all()
+
+
+def test_wave_numbers_2d():
+    # 2π domain length
+    correct_x = np.reshape(np.array([0, 1, 2, -3, -2, -1]*6), (6, 6), order='F')
+    correct_y = np.reshape(np.array([0, 1, 2, -3, -2, -1]*6), (6, 6), order='C')
+    kx, ky = rd.utils.wave_numbers_2d((6, 6))
+    assert (correct_x == kx).all()
+    assert (correct_y == ky).all()
+
+    # Mixed number of grid points
+    correct_x = np.reshape(np.array([0, 1, 2, -3, -2, -1]*8), (6, 8), order='F')
+    correct_y = np.reshape(np.array([0, 1, 2, 3, -4, -3, -2, -1]*6), (6, 8),
+                           order='C')
+    kx, ky = rd.utils.wave_numbers_2d((6, 8))
+    assert (correct_x == kx).all()
+    assert (correct_y == ky).all()
+
+    # Mixed number of grid points amd different lengths
+    L = (3.4, 5.7)
+    correct_x = np.reshape(np.array([0, 1, 2, -3, -2, -1]*8), (6, 8),
+                           order='F') * (2*np.pi / L[0])
+    correct_y = np.reshape(np.array([0, 1, 2, 3, -4, -3, -2, -1]*6), (6, 8),
+                           order='C') * (2*np.pi / L[1])
+    kx, ky = rd.utils.wave_numbers_2d((6, 8), L=L)
+    assert (correct_x == kx).all()
+    assert (correct_y == ky).all()
+
+
 def test_diff_multiplier_periodic_1d():
     # Error out on odd number of grid points
     with pytest.raises(RuntimeError) as excinfo:
