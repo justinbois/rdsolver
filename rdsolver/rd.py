@@ -259,7 +259,8 @@ def dc_dt(c, t, n_species, n, D=None, beta=None, gamma=None, f=None, f_args=(),
     return rhs
 
 
-def solve(c0, t, L=None, D=None, beta=None, gamma=None, f=None, f_args=()):
+def solve(c0, t, L=None, D=None, beta=None, gamma=None, f=None, f_args=(),
+          quiet=False):
     """
     Solve a reaction-diffusion system in two-dimensions.
     """
@@ -277,17 +278,21 @@ def solve(c0, t, L=None, D=None, beta=None, gamma=None, f=None, f_args=()):
     # Solving using VSIMEX
     return vsimex_2d(
         time_points, n_species, n, D=D, beta=beta, gamma=gamma,
-        f=f, f_args=f_args, L=L, diff_multiplier=diff_multiplier, dt0=1e-6)
+        f=f, f_args=f_args, L=L, diff_multiplier=diff_multiplier, dt0=1e-6,
+        quiet=quiet)
 
 
-def vsimex_2d(time_points, n_species, n, D=None, beta=None, gamma=None, f=None,
-              f_args=(), L=None, diff_multiplier=None, dt0=1e-6,
+def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
+              f=None, f_args=(), L=None, diff_multiplier=None, dt0=1e-6,
               dt_bounds=(0.000001, 100.0), allow_negative=False,
               vsimex_tol=0.001, vsimex_tol_buffer=0.01, k_P=0.075, k_I=0.175,
-              k_D=0.01, s_bounds=(0.1, 10.0)):
+              k_D=0.01, s_bounds=(0.1, 10.0), quiet=False):
     """
     Does adaptive step size Adams-Bashforth/Crank-Nicholson
     integration.
+
+    s_bounds : 2-tuple of floats
+        The bounds on the mutliplier for step size adjustment.
     """
 
     # Total number of grid points
@@ -324,7 +329,6 @@ def vsimex_2d(time_points, n_species, n, D=None, beta=None, gamma=None, f=None,
     u_sol = [c0]
     t = time_points[0] + dt[0] + dt[1]
     t_sol = [time_points[0]]
-    i = 1
     omega = 1.0
 
     # Take the time steps
@@ -340,67 +344,35 @@ def vsimex_2d(time_points, n_species, n, D=None, beta=None, gamma=None, f=None,
             c_step = np.fft.ifftn(c_hat_step, axes=(1, 2)).real
             u_step = c_step.flatten()
 
-            # Check to make sure there are no negative concentrations
-            if not allow_negative and (u_step < 0.0).any():
-                print 'NEGATIVE CONC, ', dt
-                # If we can't reduce step size any more
-                if dt[2] <= dt_bounds[0]:
-                    c_step[np.nonzero(c_step[j] < 0.0)] = tiny_conc
-                    c_hat_step = np.fft.fftn(c_step, axis=(1, 2))
-                    u_step = c_step.flatten()
-                    reject_step=False
-                    print ' NEGATIVE CONC, ZEROED OUT, TAKING TINY STEP '
-                else:  # Cut step size by 2
-                    dt = (dt[0], dt[1], min(dt[2] / 2.0, dt_bounds[0]))
-                    reject_step = True
-                    print ' REDUCING STEP SIZE '
+            # Perform check for negative concentrations
+            if not allow_negative:
+                u_step, c_step, c_hat_step, reject_step_because_negative = \
+                    _check_for_negative_concs(u_step, c_step, c_hat_step, dt,
+                                              dt_bounds, tiny_conc=tiny_conc, quiet=quiet)
             else:
-                reject_step = False
+                reject_step_because_negative = False
 
             # Compute the relative change
             rel_change_step = np.linalg.norm(u_step - u[1]) / \
                                                 np.linalg.norm(u_step)
 
             # If relative change less than tolerance, take step
-            if not reject_step \
-                and (rel_change_step <= vsimex_tol * (1.0 + vsimex_tol_buffer)
-                     or dt[2] <= dt_bounds[0]):
-                # Take the step
-                c_hat = (c_hat[1], c_hat_step)
-                c = (c[1], c_step)
-                u = (u[1], u_step)
-                t += dt[2]
-                f_hat = (f_hat[1], np.fft.fft2(f(c[1], t, *f_args)))
+            if not reject_step_because_negative:
+                if rel_change_step <= vsimex_tol * (1.0 + vsimex_tol_buffer) \
+                        or dt[2] <= dt_bounds[0]:
+                    # Take the step
+                    c_hat, c, u, t, f_hat = _take_step(
+                        c_hat, c, u, t, f_hat, c_step, u_step, dt, f, f_args)
 
-                # Adjust step size
-                mult = (rel_change[1] / rel_change_step)**k_P \
-                     * (vsimex_tol / rel_change_step)**k_I \
-                     * (rel_change[0]**2 / rel_change[1] / rel_change_step)**k_D
-                if mult > s_bounds[1]:
-                    mult = s_bounds[1]
-                elif mult < s_bounds[0]:
-                    mult = s_bounds[0]
-
-                new_dt = mult * dt[2]
-
-                if new_dt > dt_bounds[1]:
-                    new_dt = dt_bounds[1]
-                elif new_dt < dt_bounds[0]:
-                    new_dt = dt_bounds[0]
-
-                dt = (dt[1], dt[2], new_dt)
-                rel_change = (rel_change[1], rel_change_step)
-            elif not reject_step:
-                mult = vsimex_tol / rel_change_step
-                if mult < s_bounds[0]:
-                    mult = s_bounds[0]
-
-                new_dt = mult * dt[2]
-
-                if new_dt < dt_bounds[0]:
-                    new_dt = dt_bounds[0]
-
-                dt = (dt[0], dt[1], new_dt)
+                    # Adjust step size
+                    dt, rel_change = _adjust_step_size_pid(
+                            dt, rel_change, rel_change_step, vsimex_tol, k_P,
+                            k_I, k_D, s_bounds)
+                else:
+                    # Adjust step size, but do not take step
+                    # (step may already have been taken if we had neg. conc.)
+                    dt = _adjust_step_size_rejected_step(dt, rel_change_step,
+                                                         vsimex_tol, s_bounds)
 
         # If the solution blew up, raise an exception
         if np.isnan(u[1]).any() != 0:
@@ -408,19 +380,93 @@ def vsimex_2d(time_points, n_species, n, D=None, beta=None, gamma=None, f=None,
 
         # Store outputs
         t_sol.append(t)
-
-        u_out = np.empty(n_species * n_tot)
-        for j in xrange(n_species):
-            i0 = n_tot * j
-            i1 = i0 + n_tot
-            u_out[i0:i1] = c[1][j].flatten()
-
-        u_sol.append(u_out)
-        i += 1
+        u_sol.append(c.flatten())
 
     # Interpolate solution
-    return ode.ode_int.interpolate_solution(
+    return utils.interpolate_solution(
         np.array(u_sol).transpose(), np.array(t_sol), time_points)
+
+
+def _take_step(c_hat, c, u, t, f_hat, c_step, u_step, dt, f, f_args):
+    """
+    Update variables in taking the CNAB2 step.
+    """
+    c_hat = (c_hat[1], c_hat_step)
+    c = (c[1], c_step)
+    u = (u[1], u_step)
+    t += dt[2]
+    f_hat = (f_hat[1], np.fft.fft2(f(c[1], t, *f_args)))
+
+    return c_hat, c, u, t, f_hat
+
+
+def _adjust_step_size_rejected_step(dt, rel_change_step, vsimex_tol, s_bounds):
+    """
+    Adjust step size for a rejected step.
+    """
+    mult = vsimex_tol / rel_change_step
+    if mult < s_bounds[0]:
+        mult = s_bounds[0]
+
+    new_dt = mult * dt[2]
+
+    if new_dt < dt_bounds[0]:
+        new_dt = dt_bounds[0]
+
+    return (dt[0], dt[1], new_dt)
+
+
+def _adjust_step_size_pid(dt, rel_change, rel_change_step, vsimex_tol, k_P,
+                          k_I, k_D, s_bounds):
+    """
+    Adjust the step size using the PID controller.
+    """
+    mult = (rel_change[1] / rel_change_step)**k_P \
+         * (vsimex_tol / rel_change_step)**k_I \
+         * (rel_change[0]**2 / rel_change[1] / rel_change_step)**k_D
+    if mult > s_bounds[1]:
+        mult = s_bounds[1]
+    elif mult < s_bounds[0]:
+        mult = s_bounds[0]
+
+    new_dt = mult * dt[2]
+
+    if new_dt > dt_bounds[1]:
+        new_dt = dt_bounds[1]
+    elif new_dt < dt_bounds[0]:
+        new_dt = dt_bounds[0]
+
+    dt = (dt[1], dt[2], new_dt)
+    rel_change = (rel_change[1], rel_change_step)
+
+    return dt, rel_change
+
+
+def _check_for_negative_concs(u_step, c_step, c_hat_step, dt, dt_bounds,
+                              tiny_conc=1e-9, quiet=False):
+    """
+    Check to see is any concentrations went negative.
+    """
+    if (u_step < 0.0).any():
+        if not quiet:
+            print('NEGATIVE CONC, ', dt)
+        # If we can't reduce step size any more
+        if dt[2] <= dt_bounds[0]:
+            c_step[np.nonzero(c_step[j] < 0.0)] = tiny_conc
+            c_hat_step = np.fft.fftn(c_step, axis=(1, 2))
+            u_step = c_step.flatten()
+            reject_step = False
+            if not quiet:
+                print(' NEGATIVE CONC, ZEROED OUT, TAKING TINY STEP ')
+        else:  # Cut step size by 2
+            dt = (dt[0], dt[1], min(dt[2] / 2.0, dt_bounds[0]))
+            reject_step = True
+            if not quiet:
+                print(' REDUCING STEP SIZE ')
+    else:
+        reject_step = False
+
+    return u_step, c_step, c_hat_step, reject_step
 
 
 def cnab2_step(dt_current, dt0, f_hat, f_hat0, c_hat, D, rl, k2):
