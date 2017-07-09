@@ -21,31 +21,15 @@ def _check_and_update_inputs(c0, L, D, beta, gamma, f_args):
     # Use initial concentrations to get problem dimensions
     c0, n_species, n = _check_and_update_c0(c0)
 
-    # Make sure beta, gamma, and D are all arrays or None
-    if np.isscalar(D):
-        D = np.array([D])
+    # Make sure dimensions make sense.
+    n = _check_n_gridpoints(n)
 
-    if np.isscalar(beta):
-        beta = np.array([beta])
-
-    if np.isscalar(gamma):
-        gamma = np.array([gamma])
-
-    # Make sure arrays have proper length
-    if D is not None and len(D) != n_species:
-        raise RuntimeError('len(D) must equal c0.shape[0].')
-
-    if beta is not None and len(beta) != n_species:
-        raise RuntimeError('len(beta) must equal c0.shape[0].')
-
-    if gamma is not None and len(gamma) != n_species:
-        raise RuntimeError('len(gamma) must equal c0.shape[0].')
+    # Check D, beta, gamma for consistency
+    D = _check_beta_gamma_D(D, n_species, name='D')
+    beta = _check_beta_gamma_D(beta, n_species, name='beta')
+    gamma = _check_beta_gamma_D(gamma, n_species, name='gamma')
 
     # Perform further checks and updates
-    n = _check_n_gridpoints(n)
-    D = _check_D(D)
-    beta = _update_beta(beta, n)
-    gamma = _update_gamma(gamma, n)
     f_args = _check_f_args(f_args)
     L = _check_L(L)
 
@@ -77,62 +61,7 @@ def _check_and_update_c0(c0):
     # Extract number of grid points
     n = tuple(c0.shape[1:])
 
-    # Flatten c0
-    c0 = c0.flatten()
-
     return c0, n_species, n
-
-
-def _update_beta(beta, n):
-    """
-    Convert beta to something convenient add to flattened
-    concentrations.
-
-    Parameters
-    ----------
-    beta : nd_array or None
-        If not None, array of autoproduction rates for each chemical
-        species.
-    n : 2-tuple of ints
-        n[0] is the number of rows of differencing grid.
-        n[1] is the number of columns of differencing grid.
-
-    Returns
-    -------
-    output : nd_array, shape (len(beta) * n[0] * n[1])
-        Array that can be conveniently added to concentrations.
-    """
-    if beta is None:
-        return None
-
-    # Convert to array of floats
-    if np.isscalar(beta):
-        beta = [beta]
-    beta = np.array(beta, dtype=float)
-
-    return np.concatenate([np.array([beta_i] * n[0]*n[1]) for beta_i in beta])
-
-
-def _update_gamma(gamma, n):
-    """
-    Convert gamma to something convenient multiply flattened
-    concentrations by.
-
-    Parameters
-    ----------
-    gamma : nd_array or None
-        If not None, array of autogrowth rate constants for each
-        chemical species.
-    n : 2-tuple of ints
-        n[0] is the number of rows of differencing grid.
-        n[1] is the number of columns of differencing grid.
-
-    Returns
-    -------
-    output : nd_array, shape (len(gamma) * n[0] * n[1])
-        Array that can be conveniently added to concentrations.
-    """
-    return _update_beta(gamma, n)
 
 
 def _check_L(L):
@@ -166,28 +95,28 @@ def _check_f_args(f_args):
     return f_args
 
 
-def _check_D(D):
-    """
-    Check diffusion coefficient.
-    """
+def _check_beta_gamma_D(x, n_species, name='beta, gamma, D arrays'):
+    if x is None:
+        return np.zeros(n_species)
 
-    if D is None:
-        return None
-
-    if np.isscalar(D):
-        D = np.array([D])
+    if np.isscalar(x):
+        x = np.array([x])
 
     # Make sure it's a numpy array
-    if type(D) in [list, tuple]:
-        D = np.array(D)
+    if type(x) in [list, tuple]:
+        D = np.array(x)
 
-    if len(D.shape != 1):
-        raise RuntimeError('D must be a one-dimensional array.')
+    if len(x.shape) != 1:
+        raise RuntimeError(f'{name} must be a one-dimensional array.')
+
+    # Make sure arrays have proper length
+    if len(x) != n_species:
+        raise RuntimeError(f'len({name}) must equal c0.shape[0].')
 
     # Make sure it is a float
-    D = D.astype(float)
+    x = x.astype(float)
 
-    return D.astype(float)
+    return x.astype(float)
 
 
 def _check_n_gridpoints(n):
@@ -223,35 +152,42 @@ def dc_dt(c, t, n_species, n, D=None, beta=None, gamma=None, f=None, f_args=(),
         Flattened array of concentrations
     t : float
         Time
-    D : array_like
-        Array of diffusion coefficients for species.
     n : 2-tuple of ints
         n[0] is the number of rows of differencing grid.
         n[1] is the number of columns of differencing grid.
-    beta : array_like, shape is same as c
-
+    D : array_like, shape (n_species, )
+        Array of diffusion coefficients for species.
+    beta : array_like, shape (n_species, )
+        Array of autoproduction constants.
+    gamma : array_like, shape (n_species, )
+        Array of degradation constants. Note that negative gamma
+        means degradation.
     f : function
         Function to compute the nonlinear terms of the dynamics.
         Call signature f(c, t, *f_args), where c[0] is concentration
         of species 0, c[1] is concentration of species 2, etc.
+    f_args : tuple, default ()
     """
-    rhs = np.zeros_like(c)
+    rhs = np.empty_like(c)
     n_tot = n[0] * n[1]
 
-    # Compute diffusive terms
-    if D is not None:
-        for i, d in enumerate(D):
-            i0 = i * n_tot
-            i1 = (i+1) * n_tot
-            rhs[i0:i1] += d * utils.laplacian_flat_periodic_2d(
-                        c[i0:i1], n, L=L, diff_multiplier=diff_multiplier)
+    if D is None:
+        D = np.zeros(n_species)
 
-    # Add reaction terms
-    if beta is not None:
-        rhs += beta
+    if beta is None:
+        beta = np.zeros(n_species)
 
-    if gamma is not None:
-        rhs += gamma * c
+    if gamma is None:
+        gamma = np.zeros(n_species)
+
+    # Linear terms of right-hand side
+    for i, dbg in enumerate(zip(D, beta, gamma)):
+        d, b, g = dbg
+        i0 = i * n_tot
+        i1 = (i+1) * n_tot
+        rhs[i0:i1] = d * utils.laplacian_flat_periodic_2d(
+                    c[i0:i1], n, L=L, diff_multiplier=diff_multiplier)
+        rhs[i0:i1] += b + g * c[i0:i1]
 
     if f is not None:
         rhs += f(c.reshape((n_species, n_tot)), t, *f_args).flatten()
@@ -270,7 +206,7 @@ def solve(c0, t, L=None, D=None, beta=None, gamma=None, f=None, f_args=(),
 
     # Compute square of wave numbers
     kx, ky = utils.wave_numbers_2d(n, L=L)
-    k2 = (kx**2 + ky**2).flatten()
+    k2 = (kx**2 + ky**2)
 
     # Differencing multiplier for Laplacian
     diff_multiplier = diff_multiplier_periodic_2d(n, order=2)
@@ -306,16 +242,16 @@ def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
     rkf45_time_points = np.array([time_points[0],
                                   time_points[0] + dt[0],
                                   time_points[0] + dt[0] + dt[1]])
-    args = (n_species, n, D, beta, gamma, f, f_args=(), L, diff_multiplier)
-    rkf45_output = utils.rkf45(dc_dt, c0, rkf45_time_points, args=args,
-                               dt=dt[0]/10)
+    args = (n_species, n, D, beta, gamma, f, f_args, L, diff_multiplier)
+    rkf45_output = utils.rkf45(dc_dt, c0.flatten(), rkf45_time_points,
+                               args=args, dt=dt[0]/10)
 
     # Initialize previous steps from solution
     u = (rkf45_output[:,-2], rkf45_output[:,-1])
 
     # Initialize the relative change from the time steps
     rel_change = (np.linalg.norm(u[1] - u[0]) / np.linalg.norm(u[1]),
-                  np.linalg.norm(u[0] - c0) / np.linalg.norm(u[0]))
+                  np.linalg.norm(u[0] - c0.flatten()) / np.linalg.norm(u[0]))
 
     # Pull out concentrations and compute FFTs
     c = tuple(u_entry.reshape((n_species, *n)) for u_entry in u)
@@ -326,7 +262,7 @@ def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
              np.fft.fft2(f(c[1], time_points[0] + dt[0] + dt[1], *f_args)))
 
     # Set up return variables
-    u_sol = [c0]
+    u_sol = [c0.flatten()]
     t = time_points[0] + dt[0] + dt[1]
     t_sol = [time_points[0]]
     omega = 1.0
@@ -511,6 +447,7 @@ def cnab2_step(dt_current, dt0, f_hat, f_hat0, c_hat, D, rl, k2):
     n = len(c_hat) // len(D)
 
     new_c = np.copy(c)
+
 
     for i, d in enumerate(D):
         i0 = i*n
