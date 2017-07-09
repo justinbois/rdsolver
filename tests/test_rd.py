@@ -30,6 +30,17 @@ def test_check_beta_gamma_D():
     excinfo.match('x must be a one-dimensional array.')
 
 
+def test_check_f():
+    with pytest.raises(RuntimeError) as excinfo:
+        rdsolver.rd._check_f(None, (2.5,))
+    excinfo.match('f is None, but f_args are given.')
+
+    assert rdsolver.rd._check_f(None, ()) == ()
+    assert rdsolver.rd._check_f(None, None) == ()
+    assert rdsolver.rd._check_f(lambda x, t: x, ()) == ()
+    assert rdsolver.rd._check_f(lambda x, t: x, None) == ()
+
+
 def test_check_and_update_inputs():
     # Single species, 2D array
     c0 = np.array([[1, 2, 3, 4], [5, 6, 7, 8]])
@@ -38,9 +49,10 @@ def test_check_and_update_inputs():
     L = None
     beta = None
     gamma = None
+    f = None
     f_args = ()
     c0, n_species, n, L, D, beta, gamma, f_args = \
-        rdsolver.rd._check_and_update_inputs(c0, L, D, beta, gamma, f_args)
+        rdsolver.rd._check_and_update_inputs(c0, L, D, beta, gamma, f, f_args)
     assert (correct_c0 == c0).all()
     assert n_species == 1
     assert n == (2, 4)
@@ -60,9 +72,10 @@ def test_check_and_update_inputs():
     L = None
     beta = None
     gamma = None
+    f = None
     f_args = ()
     c0, n_species, n, L, D, beta, gamma, f_args = \
-        rdsolver.rd._check_and_update_inputs(c0, L, D, beta, gamma, f_args)
+        rdsolver.rd._check_and_update_inputs(c0, L, D, beta, gamma, f, f_args)
     assert (correct_c0 == c0).all()
     assert n_species == 2
     assert n == (2, 4)

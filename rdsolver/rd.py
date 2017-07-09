@@ -8,12 +8,14 @@ of the paramters beta and gamma for each chemical species, and a
 function giving the nonlinear terms of the chemical reaction, which
 can in general be a function of time.
 """
+import inspect
+
 import numpy as np
 
 from . import utils
 
 
-def _check_and_update_inputs(c0, L, D, beta, gamma, f_args):
+def _check_and_update_inputs(c0, L, D, beta, gamma, f, f_args):
     """
     Check inputs and update parameters for convenient use.
     """
@@ -30,7 +32,7 @@ def _check_and_update_inputs(c0, L, D, beta, gamma, f_args):
     gamma = _check_beta_gamma_D(gamma, n_species, name='gamma')
 
     # Perform further checks and updates
-    f_args = _check_f_args(f_args)
+    f_args = _check_f(f, f_args)
     L = _check_L(L)
 
     return c0, n_species, n, L, D, beta, gamma, f_args
@@ -82,15 +84,30 @@ def _check_L(L):
     return (float(L[0]), float(L[1]))
 
 
-def _check_f_args(f_args):
+def _check_f(f, f_args):
     """
     Check arguments for reaction function.
     """
-    if f_args is None:
-        return tuple()
+    if f is None and f_args is not None and f_args != ():
+        raise RuntimeError('f is None, but f_args are given.')
 
-    if type(f_args) in [list, np.ndarray]:
-        return tuple(f_args)
+    if f_args is None or type(f_args) in [list, np.ndarray]:
+        f_args = tuple()
+
+    # Check the call signature of f
+    if f is not None:
+        f_params = inspect.signature(f).parameters
+
+        # Make sure there are no variable keyword args in f; no f(**kw).
+        for key in f_params:
+            if f_params[key].kind == inspect._ParameterKind.VAR_KEYWORD:
+                raise RuntimeError('f cannot accept **kwargs')
+
+        # Make sure we have correct number of args
+        if len(f_params) != len(f_args) + 2:
+            err_str = 'f must have call signature f(c, t, *args). '
+            err_str += 'Length of f_args and f signature mismatch.'
+            raise RuntimeError(err_str)
 
     return f_args
 
@@ -189,6 +206,7 @@ def dc_dt(c, t, n_species, n, D=None, beta=None, gamma=None, f=None, f_args=(),
                     c[i0:i1], n, L=L, diff_multiplier=diff_multiplier)
         rhs[i0:i1] += b + g * c[i0:i1]
 
+    # Nonlinear terms
     if f is not None:
         rhs += f(c.reshape((n_species, n_tot)), t, *f_args).flatten()
 
@@ -210,6 +228,11 @@ def solve(c0, t, L=None, D=None, beta=None, gamma=None, f=None, f_args=(),
 
     # Differencing multiplier for Laplacian
     diff_multiplier = diff_multiplier_periodic_2d(n, order=2)
+
+    # If no nonlinear function
+    if f is None:
+        f = lambda x, t: np.zeros_like(x)
+        f_args = ()
 
     # Solving using VSIMEX
     return vsimex_2d(
