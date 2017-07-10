@@ -1,0 +1,5 @@
+.cache/
+.eggs/
+build/
+dist/
+rdsolver.egg-info
