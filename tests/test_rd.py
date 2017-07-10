@@ -87,7 +87,6 @@ def test_check_and_update_inputs():
     assert f_args == ()
 
 
-
 def test_dc_dt():
     # Even concentration field, two species, no rxns
     n = (6, 6)
@@ -205,3 +204,92 @@ def test_dc_dt():
     assert np.isclose(correct,
                       rd.dc_dt(c, t, 2, n, D, gamma=gamma, beta=beta, f=f,
                       f_args=f_args)).all()
+
+def check_cnab2_expressions(c_hat_step, dt_current, dt0, c_hat, f_hat, D, beta,
+                            gamma, k2):
+    """
+    Check that standard CNAB2 expression holds.
+    """
+    lhs = (c_hat_step - c_hat) / dt_current
+
+    omega = dt_current / dt0
+    # Nonlinear terms
+    rhs = (1 + omega/2) * f_hat[1] - omega/2 * f_hat[0]
+
+    # Linear terms
+    for i, dbg in enumerate(zip(D, beta, gamma)):
+        d, b, g = dbg
+        rhs[i,:,:] += b
+        rhs[i,:,:] += (g - k2 * d) * (c_hat_step[i,:,:] + c_hat[i,:,:]) / 2
+
+    assert np.isclose(lhs, rhs).all()
+
+
+def test_cnab2_step():
+    dt_current = 1
+    dt0 = 1
+    n = (64, 64)
+    c = (np.ones((1,) + n), np.ones((1,) + n))
+    c_hat = np.fft.fftn(c[1], axes=(1, 2))
+    f = lambda x, t: x
+    f_hat = tuple([np.fft.fftn(f(c_val, 0), axes=(1, 2)) for c_val in c])
+    D = np.array([0.0])
+    beta = np.array([0.0])
+    gamma = np.array([0.0])
+    kx, ky = rd.utils.wave_numbers_2d(n)
+    k2 = (kx**2 + ky**2)
+    c_hat_step = rd.cnab2_step(dt_current, dt0, c_hat, f_hat, D, beta, gamma,
+                               k2)
+    check_cnab2_expressions(c_hat_step, dt_current, dt0, c_hat, f_hat, D, beta,
+                                gamma, k2)
+
+    dt_current = 1
+    dt0 = 1.3
+    n = (64, 128)
+    c = (np.ones((1,) + n), np.ones((1,) + n))
+    c_hat = np.fft.fftn(c[1], axes=(1, 2))
+    f = lambda x, t: x
+    f_hat = tuple([np.fft.fftn(f(c_val, 0), axes=(1, 2)) for c_val in c])
+    D = np.array([0.0])
+    beta = np.array([0.0])
+    gamma = np.array([0.0])
+    kx, ky = rd.utils.wave_numbers_2d(n)
+    k2 = (kx**2 + ky**2)
+    c_hat_step = rd.cnab2_step(dt_current, dt0, c_hat, f_hat, D, beta, gamma,
+                               k2)
+    check_cnab2_expressions(c_hat_step, dt_current, dt0, c_hat, f_hat, D, beta,
+                                gamma, k2)
+
+    dt_current = 1
+    dt0 = 1.3
+    n = (64, 128)
+    c = (np.ones((2,) + n), np.ones((2,) + n))
+    c_hat = np.fft.fftn(c[1], axes=(1, 2))
+    f = lambda x, t: x
+    f_hat = tuple([np.fft.fftn(f(c_val, 0), axes=(1, 2)) for c_val in c])
+    D = np.array([0.0, 0.0])
+    beta = np.array([0.0, 0.0])
+    gamma = np.array([0.0, 0.0])
+    kx, ky = rd.utils.wave_numbers_2d(n)
+    k2 = (kx**2 + ky**2)
+    c_hat_step = rd.cnab2_step(dt_current, dt0, c_hat, f_hat, D, beta, gamma,
+                               k2)
+    check_cnab2_expressions(c_hat_step, dt_current, dt0, c_hat, f_hat, D, beta,
+                                gamma, k2)
+
+    dt_current = 1
+    dt0 = 1.3
+    n = (64, 128)
+    c = (np.ones((2,) + n), np.ones((2,) + n))
+    c_hat = np.fft.fftn(c[1], axes=(1, 2))
+    f = lambda x, t: x
+    f_hat = tuple([np.fft.fftn(f(c_val, 0), axes=(1, 2)) for c_val in c])
+    D = np.array([1.0, 0.2])
+    beta = np.array([0.6, 10.0])
+    gamma = np.array([-1.0, -0.5])
+    kx, ky = rd.utils.wave_numbers_2d(n)
+    k2 = (kx**2 + ky**2)
+    c_hat_step = rd.cnab2_step(dt_current, dt0, c_hat, f_hat, D, beta, gamma,
+                               k2)
+    check_cnab2_expressions(c_hat_step, dt_current, dt0, c_hat, f_hat, D, beta,
+                                gamma, k2)

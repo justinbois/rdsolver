@@ -14,149 +14,11 @@ import numpy as np
 
 from . import utils
 
-
-def _check_and_update_inputs(c0, L, D, beta, gamma, f, f_args):
+def initial_condition(c0, n):
     """
-    Check inputs and update parameters for convenient use.
+    Generate initial condition as a small perturbation from uniform c0.
     """
-
-    # Use initial concentrations to get problem dimensions
-    c0, n_species, n = _check_and_update_c0(c0)
-
-    # Make sure dimensions make sense.
-    n = _check_n_gridpoints(n)
-
-    # Check D, beta, gamma for consistency
-    D = _check_beta_gamma_D(D, n_species, name='D')
-    beta = _check_beta_gamma_D(beta, n_species, name='beta')
-    gamma = _check_beta_gamma_D(gamma, n_species, name='gamma')
-
-    # Perform further checks and updates
-    f_args = _check_f(f, f_args)
-    L = _check_L(L)
-
-    return c0, n_species, n, L, D, beta, gamma, f_args
-
-
-def _check_and_update_c0(c0):
-    """
-    Check c0 and convert to flattened array.
-    """
-
-    # Convert to Numpy array in case it's a list of lists or something
-    c0 = np.array(c0)
-
-    # Convert to 3D array for single species
-    if len(c0.shape) == 2:
-        c0 = np.array([c0])
-
-    if len(c0.shape) != 3:
-        raise RuntimeError('c0 must be an n_species by nx by ny numpy array')
-
-    # Make sure all concentrations are nonnegative
-    if (c0 < 0).any():
-        raise RuntimeError('All entries in c0 must be nonnegative.')
-
-    # Determine number of species.
-    n_species = c0.shape[0]
-
-    # Extract number of grid points
-    n = tuple(c0.shape[1:])
-
-    return c0, n_species, n
-
-
-def _check_L(L):
-    """
-    Check physical lengths of domain.
-    """
-    if L is None:
-        return (2*np.pi, 2*np.pi)
-
-    # Length must be 2-tuple
-    if type(L) in [list, np.ndarray]:
-        L = tuple(L)
-
-    if type(L) != tuple or len(L) != 2:
-        raise Runtimerror('`L` must be a 2-tuple.')
-
-    # Make sure the lengths are float
-    return (float(L[0]), float(L[1]))
-
-
-def _check_f(f, f_args):
-    """
-    Check arguments for reaction function.
-    """
-    if f is None and f_args is not None and f_args != ():
-        raise RuntimeError('f is None, but f_args are given.')
-
-    if f_args is None or type(f_args) in [list, np.ndarray]:
-        f_args = tuple()
-
-    # Check the call signature of f
-    if f is not None:
-        f_params = inspect.signature(f).parameters
-
-        # Make sure there are no variable keyword args in f; no f(**kw).
-        for key in f_params:
-            if f_params[key].kind == inspect._ParameterKind.VAR_KEYWORD:
-                raise RuntimeError('f cannot accept **kwargs')
-
-        # Make sure we have correct number of args
-        if len(f_params) != len(f_args) + 2:
-            err_str = 'f must have call signature f(c, t, *args). '
-            err_str += 'Length of f_args and f signature mismatch.'
-            raise RuntimeError(err_str)
-
-    return f_args
-
-
-def _check_beta_gamma_D(x, n_species, name='beta, gamma, D arrays'):
-    if x is None:
-        return np.zeros(n_species)
-
-    if np.isscalar(x):
-        x = np.array([x])
-
-    # Make sure it's a numpy array
-    if type(x) in [list, tuple]:
-        D = np.array(x)
-
-    if len(x.shape) != 1:
-        raise RuntimeError(f'{name} must be a one-dimensional array.')
-
-    # Make sure arrays have proper length
-    if len(x) != n_species:
-        raise RuntimeError(f'len({name}) must equal c0.shape[0].')
-
-    # Make sure it is a float
-    x = x.astype(float)
-
-    return x.astype(float)
-
-
-def _check_n_gridpoints(n):
-    """
-    Check number of grid points meet requirements.
-    """
-    # Number of grid points must be tuple of ints
-    if type(n) in [list, np.ndarray]:
-        n = tuple(n)
-
-    if type(n) != tuple or len(n) != 2:
-        raise RuntimeError('`n` must be a 2-tuple.')
-
-    # Make sure the number of grid points are ints
-    if type(n[0]) != int or type(n[1]) != int:
-        raise RuntimeError('Number of grid points must be integer.')
-
-    # Make sure they are even
-    if n[0] % 2 != 0 or n[1] % 2 != 0:
-        raise RuntimeError('Number of grid points must be even.')
-
-    return n
-
+    
 
 def dc_dt(c, t, n_species, n, D=None, beta=None, gamma=None, f=None, f_args=(),
           L=None, diff_multiplier=None):
@@ -213,8 +75,11 @@ def dc_dt(c, t, n_species, n, D=None, beta=None, gamma=None, f=None, f_args=(),
     return rhs
 
 
-def solve(c0, t, L=None, D=None, beta=None, gamma=None, f=None, f_args=(),
-          quiet=False):
+def solve(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
+          f=None, f_args=(), L=None, diff_multiplier=None, dt0=1e-6,
+          dt_bounds=(0.000001, 100.0), allow_negative=False,
+          vsimex_tol=0.001, vsimex_tol_buffer=0.01, k_P=0.075, k_I=0.175,
+          k_D=0.01, s_bounds=(0.1, 10.0), quiet=False):
     """
     Solve a reaction-diffusion system in two-dimensions.
     """
@@ -235,15 +100,17 @@ def solve(c0, t, L=None, D=None, beta=None, gamma=None, f=None, f_args=(),
         f_args = ()
 
     # Solving using VSIMEX
-    return vsimex_2d(
+    u_sol = vsimex_2d(
         time_points, n_species, n, D=D, beta=beta, gamma=gamma,
         f=f, f_args=f_args, L=L, diff_multiplier=diff_multiplier, dt0=1e-6,
         quiet=quiet)
 
+    # Reshape for return
+    return u_sol
 
 def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
-              f=None, f_args=(), L=None, diff_multiplier=None, dt0=1e-6,
-              dt_bounds=(0.000001, 100.0), allow_negative=False,
+              f=None, f_args=(), L=None, diff_multiplier=None, k2=None,
+              dt0=1e-6, dt_bounds=(0.000001, 100.0), allow_negative=False,
               vsimex_tol=0.001, vsimex_tol_buffer=0.01, k_P=0.075, k_I=0.175,
               k_D=0.01, s_bounds=(0.1, 10.0), quiet=False):
     """
@@ -253,6 +120,11 @@ def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
     s_bounds : 2-tuple of floats
         The bounds on the mutliplier for step size adjustment.
     """
+
+    # Make sure all required kwargs are specified
+    if None in [D, beta, gamma, f, f_args, L, diff_multipler, k2]:
+        raise RuntimeError('D, beta, gamma, f, f_args, L, '
+                           + 'diff_multipler, k2 must all be specified.')
 
     # Total number of grid points
     n_tot = n[0] * n[1]
@@ -278,7 +150,7 @@ def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
 
     # Pull out concentrations and compute FFTs
     c = tuple(u_entry.reshape((n_species, *n)) for u_entry in u)
-    c_hat = tuple(np.fft.fftn(c_entry, axes=(1,2)) for c_entry in c)
+    c_hat = np.fft.fftn(c[1], axes=(1,2))
 
     # Compute initial f_hat
     f_hat = (np.fft.fft2(f(c[0], time_points[0] + dt[0], *f_args)),
@@ -288,16 +160,14 @@ def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
     u_sol = [c0.flatten()]
     t = time_points[0] + dt[0] + dt[1]
     t_sol = [time_points[0]]
-    omega = 1.0
 
     # Take the time steps
     while t < time_points[-1]:
         next_time_point_index = np.searchsorted(time_points, t)
         while t < time_points[next_time_point_index]:
-            omega = dt[2] / dt[1]
-
-            # THIS IS WHERE THE CNAB2 STEP IS
-            c_hat_step = cnab2_step()
+            # Compute the CNAB2 step
+            c_hat_step = cnab2_step(dt[2], dt[1], c_hat, f_hat, D, beta,
+                                    gamma, k2)
 
             # Convert to real space and build u_step
             c_step = np.fft.ifftn(c_hat_step, axes=(1, 2)).real
@@ -350,7 +220,7 @@ def _take_step(c_hat, c, u, t, f_hat, c_step, u_step, dt, f, f_args):
     """
     Update variables in taking the CNAB2 step.
     """
-    c_hat = (c_hat[1], c_hat_step)
+    c_hat = c_hat_step
     c = (c[1], c_step)
     u = (u[1], u_step)
     t += dt[2]
@@ -428,7 +298,7 @@ def _check_for_negative_concs(u_step, c_step, c_hat_step, dt, dt_bounds,
     return u_step, c_step, c_hat_step, reject_step
 
 
-def cnab2_step(dt_current, dt0, f_hat, f_hat0, c_hat, D, rl, k2):
+def cnab2_step(dt_current, dt0, c_hat, f_hat, D, beta, gamma, k2):
     """
     Takes a Crank-Nicolson/Adams-Bashforth (2nd order) step for
     RD system in Fourier space.
@@ -445,8 +315,6 @@ def cnab2_step(dt_current, dt0, f_hat, f_hat0, c_hat, D, rl, k2):
         concentrations of first chemical species, next
         len(c_hat)/len(D) for for second chemical species, and
         so on.
-    f_hat0 : array_like, shape (n_species * total_n_grid_points, )
-        FFT of nonlinear part of dynamics from previous time step.
     c_hat : array_like, shape (n_species * total_n_grid_points, )
         Current FFT of concentrations.
     D : array_like, shape (n_species, )
@@ -467,20 +335,157 @@ def cnab2_step(dt_current, dt0, f_hat, f_hat0, c_hat, D, rl, k2):
     """
 
     omega = dt_current / dt0
-    n = len(c_hat) // len(D)
 
-    new_c = np.copy(c)
+    # Nonlinear terms
+    c_hat_step = (1 + omega/2) * f_hat[1] - omega/2 * f_hat[0]
+
+    # Linear terms
+    for i, dbg in enumerate(zip(D, beta, gamma)):
+        d, b, g = dbg
+        c_hat_step[i,:,:] += b + (1/dt_current - k2*d/2 + g/2) * c_hat[i,:,:]
+        c_hat_step[i,:,:] /= (1/dt_current + k2*d/2 - g/2)
+
+    return c_hat_step
 
 
-    for i, d in enumerate(D):
-        i0 = i*n
-        i1 = (i+1)*n
-        f = f_hat[i0:i1]
-        f0 = f_hat0[i0:i1]
-        c = c_hat[i0:i1]
+def _check_and_update_inputs(c0, L, D, beta, gamma, f, f_args):
+    """
+    Check inputs and update parameters for convenient use.
+    """
 
-        # CHECK THIS TO MAKE SURE LINEAR TERM IS DONE CORRECTLY
-        new_c[i0:i1] = c + dt_current * ((1 + omega/2) * f - omega/2 * f
-                + (d * k2 - rl.sum(axis=1)) * c)
+    # Use initial concentrations to get problem dimensions
+    c0, n_species, n = _check_and_update_c0(c0)
 
-    return new_c
+    # Make sure dimensions make sense.
+    n = _check_n_gridpoints(n)
+
+    # Check D, beta, gamma for consistency
+    D = _check_beta_gamma_D(D, n_species, name='D')
+    beta = _check_beta_gamma_D(beta, n_species, name='beta')
+    gamma = _check_beta_gamma_D(gamma, n_species, name='gamma')
+
+    # Perform further checks and updates
+    f_args = _check_f(f, f_args)
+    L = _check_L(L)
+
+    return c0, n_species, n, L, D, beta, gamma, f_args
+
+
+def _check_and_update_c0(c0):
+    """
+    Check c0 and convert to flattened array.
+    """
+
+    # Convert to Numpy array in case it's a list of lists or something
+    c0 = np.array(c0)
+
+    # Convert to 3D array for single species
+    if len(c0.shape) == 2:
+        c0 = np.array([c0])
+
+    if len(c0.shape) != 3:
+        raise RuntimeError('c0 must be an n_species by nx by ny numpy array')
+
+    # Make sure all concentrations are nonnegative
+    if (c0 < 0).any():
+        raise RuntimeError('All entries in c0 must be nonnegative.')
+
+    # Determine number of species.
+    n_species = c0.shape[0]
+
+    # Extract number of grid points
+    n = tuple(c0.shape[1:])
+
+    return c0, n_species, n
+
+
+def _check_beta_gamma_D(x, n_species, name='beta, gamma, D arrays'):
+    if x is None:
+        return np.zeros(n_species)
+
+    if np.isscalar(x):
+        x = np.array([x])
+
+    # Make sure it's a numpy array
+    if type(x) in [list, tuple]:
+        D = np.array(x)
+
+    if len(x.shape) != 1:
+        raise RuntimeError(f'{name} must be a one-dimensional array.')
+
+    # Make sure arrays have proper length
+    if len(x) != n_species:
+        raise RuntimeError(f'len({name}) must equal c0.shape[0].')
+
+    # Make sure it is a float
+    x = x.astype(float)
+
+    return x.astype(float)
+
+
+def _check_n_gridpoints(n):
+    """
+    Check number of grid points meet requirements.
+    """
+    # Number of grid points must be tuple of ints
+    if type(n) in [list, np.ndarray]:
+        n = tuple(n)
+
+    if type(n) != tuple or len(n) != 2:
+        raise RuntimeError('`n` must be a 2-tuple.')
+
+    # Make sure the number of grid points are ints
+    if type(n[0]) != int or type(n[1]) != int:
+        raise RuntimeError('Number of grid points must be integer.')
+
+    # Make sure they are even
+    if n[0] % 2 != 0 or n[1] % 2 != 0:
+        raise RuntimeError('Number of grid points must be even.')
+
+    return n
+
+
+def _check_f(f, f_args):
+    """
+    Check arguments for reaction function.
+    """
+    if f is None and f_args is not None and f_args != ():
+        raise RuntimeError('f is None, but f_args are given.')
+
+    if f_args is None or type(f_args) in [list, np.ndarray]:
+        f_args = tuple()
+
+    # Check the call signature of f
+    if f is not None:
+        f_params = inspect.signature(f).parameters
+
+        # Make sure there are no variable keyword args in f; no f(**kw).
+        for key in f_params:
+            if f_params[key].kind == inspect._ParameterKind.VAR_KEYWORD:
+                raise RuntimeError('f cannot accept **kwargs')
+
+        # Make sure we have correct number of args
+        if len(f_params) != len(f_args) + 2:
+            err_str = 'f must have call signature f(c, t, *args). '
+            err_str += 'Length of f_args and f signature mismatch.'
+            raise RuntimeError(err_str)
+
+    return f_args
+
+
+def _check_L(L):
+    """
+    Check physical lengths of domain.
+    """
+    if L is None:
+        return (2*np.pi, 2*np.pi)
+
+    # Length must be 2-tuple
+    if type(L) in [list, np.ndarray]:
+        L = tuple(L)
+
+    if type(L) != tuple or len(L) != 2:
+        raise Runtimerror('`L` must be a 2-tuple.')
+
+    # Make sure the lengths are float
+    return (float(L[0]), float(L[1]))
