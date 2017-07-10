@@ -45,7 +45,7 @@ def test_check_and_update_inputs():
     # Single species, 2D array
     c0 = np.array([[1, 2, 3, 4], [5, 6, 7, 8]])
     correct_c0 = c0
-    D = None
+    D = 1.0
     L = None
     beta = None
     gamma = None
@@ -58,7 +58,7 @@ def test_check_and_update_inputs():
     assert n == (2, 4)
     assert type(L) == tuple \
                 and np.isclose(np.array(L), 2 * np.pi * np.ones(2)).all()
-    assert (D == np.array([0.0])).all()
+    assert (D == np.array([1.0])).all()
     assert (beta == np.array([0.0])).all()
     assert (gamma == np.array([0.0])).all()
     assert f_args == ()
@@ -68,7 +68,7 @@ def test_check_and_update_inputs():
     c0_1 = np.array([[9, 10, 11, 12], [13, 14, 15, 16]])
     c0 = np.stack((c0_0, c0_1))
     correct_c0 = c0
-    D = None
+    D = np.array([1.0, 0.0])
     L = None
     beta = None
     gamma = None
@@ -81,10 +81,24 @@ def test_check_and_update_inputs():
     assert n == (2, 4)
     assert type(L) == tuple \
                 and np.isclose(np.array(L), 2 * np.pi * np.ones(2)).all()
-    assert (D == np.array([0.0])).all()
-    assert (beta == np.array([0.0])).all()
-    assert (gamma == np.array([0.0])).all()
+    assert (D == np.array([1.0, 0.0])).all()
+    assert (beta == np.array([0.0, 0.0])).all()
+    assert (gamma == np.array([0.0, 0.0])).all()
     assert f_args == ()
+
+    c0_0 = np.array([[1, 2, 3, 4], [5, 6, 7, 8]])
+    c0_1 = np.array([[9, 10, 11, 12], [13, 14, 15, 16]])
+    c0 = np.stack((c0_0, c0_1))
+    correct_c0 = c0
+    D = None
+    L = None
+    beta = None
+    gamma = None
+    f = None
+    f_args = ()
+    with pytest.raises(RuntimeError) as excinfo:
+        rdsolver.rd._check_and_update_inputs(c0, L, D, beta, gamma, f, f_args)
+        excinfo.match('At least one of D, beta, gamma, and f must be nonzero.')
 
 
 def test_dc_dt():

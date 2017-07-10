@@ -2,6 +2,8 @@
 
 [![Build Status](https://travis-ci.org/justinbois/rdsolver.svg?branch=master)](https://travis-ci.org/justinbois/rdsolver)
 
+## Status
+**Not ready for use. Unit tests are passing, but coverage is not complete nor are integration tests.**
 
 ## Purpose
 This package solves a simple problem: reaction diffusion dynamics in two dimensions. Specifically, it solves the system of PDEs

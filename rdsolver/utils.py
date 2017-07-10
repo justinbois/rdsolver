@@ -301,10 +301,10 @@ def flat_to_3d(c_flat, n_species, n):
     ----------
     c_flat : array_like, shape (n_species*n[0]*n[1])
         Flattened array of concentrations
-    n_species : 
+    n_species :
     """
 
-def rkf45_step(f, y, t, args, h, tol):
+def rkf45_step(f, y, t, args, h, tol, s_bounds, h_min):
     """
     Take an RKF45 step from point y at time t to time t +
     dt for dy/dt = f(y, t, args).
@@ -323,6 +323,10 @@ def rkf45_step(f, y, t, args, h, tol):
         Time step size
     tol : float
         Tolerance for error in the step
+    s_bounds : 2-tuple of floats
+        The bounds on the mutliplier for step size adjustment.
+    h_min : float
+        Minimal step size.
 
     Returns
     -------
@@ -374,7 +378,7 @@ def rkf45_step(f, y, t, args, h, tol):
     elif s > s_bounds[1]:
         s = s_bounds[1]
 
-    return y_new, t, np.max(s * h, h_min)
+    return y_new, t, max(s * h, h_min)
 
 
 def rkf45(f, initial_cond, time_points, args=(), dt=None,
@@ -411,7 +415,7 @@ def rkf45(f, initial_cond, time_points, args=(), dt=None,
 
     while i < i_max:
         while t < time_points[i]:
-            y_0, t, h = rkf45_step(f, y_0, t, args, h, tol)
+            y_0, t, h = rkf45_step(f, y_0, t, args, h, tol, s_bounds, h_min)
         if t > t_sol[-1]:
             y.append(y_0)
             t_sol.append(t)
@@ -446,17 +450,17 @@ def interpolate_solution(y, t_sol, t):
     if len(t_sol) <= 3 or (len(t_sol) == len(t) and (t_sol == t).all()):
         return y
 
-    y_real_interp = np.empty((shape(y)[0], len(t)))
-    for i in range(shape(y)[0]):
+    y_real_interp = np.empty((y.shape[0], len(t)))
+    for i in range(y.shape[0]):
         # Make B-spline
-        tck = scipy.interploate.splrep(t_sol, y.real[i,:])
+        tck = scipy.interpolate.splrep(t_sol, y.real[i,:])
 
         # Evaluate B-spline at desired points
         y_real_interp[i,:] = scipy.interpolate.splev(t, tck)
 
     if np.iscomplex(y).any():
-        y_imag_interp = np.zeros((shape(y)[0], len(t)))
-        for i in range(shape(y)[0]):
+        y_imag_interp = np.zeros((y.shape[0], len(t)))
+        for i in range(y.shape[0]):
             # Make B-spline
             tck = scipy.interpolate.splrep(t_sol, y.imag[i,:])
 

@@ -11,14 +11,78 @@ can in general be a function of time.
 import inspect
 
 import numpy as np
+import scipy.special
 
 from . import utils
 
-def initial_condition(c0, n):
+def initial_condition(uniform_conc, n, L=None, n_bumps=20,
+                      bump_width_range=(0.025, 0.1), max_amplitude=0.005):
     """
     Generate initial condition as a small perturbation from uniform c0.
+
+    Parameters
+    ----------
+    uniform_conc : array_like
+        uniform_conc[i] = the uniform concentration for species i about
+        with the perturbed initial condition is made.
+    n : 2-tuple of ints
+        n[0] is the number of rows of differencing grid.
+        n[1] is the number of columns of differencing grid.
+    L : 2-tuple of float, default (2*pi, 2*pi)
+        The physical length of the domain in x and y.
+    n_bumps : int, default 20
+        Number of bumps to have in the perturbed concentration fields.
+    bump_width_range : 2-tuple of floats, default (0.025, 0.1)
+        Range of widths of the bumps as a fraction of the width of the
+        domain.
+    max_amplitude : float, default 0.005
+        Maximum amplitude of the perturbation. This is in absolute units
+        to allow perturbations from zero.
+
+    Returns
+    -------
+    output : ndarray, shape (len(uniform_conc), n[0], n[1])
+        Initial condition for the concentrations.
+
+    Notes
+    -----
+    .. Note that all bumps are positive perturbations. This is to
+       prevent the possibility of negative concentrations.
     """
-    
+
+    # Get dimensions
+    L = _check_L(L)
+
+    # Infer number of species from concnetrations
+    if np.isscalar(uniform_conc):
+        uniform_conc = [uniform_conc]
+    uniform_conc = np.array(uniform_conc)
+    n_species = len(uniform_conc)
+
+    # Get grid points
+    _, _, _, _, x_grid, y_grid = utils.grid_points_2d(n, L=L)
+
+    # Multiplier factor to smooth out edges
+    mult_factor = \
+        (1.0 + scipy.special.erf(40.0 * (x_grid - 0.1 * L[0]) / L[0])) / 2.0 \
+      * (1.0 - scipy.special.erf(40.0 * (x_grid - 0.9 * L[0]) / L[0])) / 2.0 \
+      * (1.0 + scipy.special.erf(40.0 * (y_grid - 0.1 * L[1]) / L[1])) / 2.0 \
+      * (1.0 - scipy.special.erf(40.0 * (y_grid - 0.9 * L[1]) / L[1])) / 2.0
+
+    # Make bumps
+    c0 = np.ones((n_species, *n))
+    for i in range(n_species):
+        for j in range(n_bumps):
+            x_pos = np.random.rand() * L[0]
+            y_pos = np.random.rand() * L[1]
+            width = max(L[0], L[1]) * (bump_width_range[0] \
+              + (bump_width_range[1] - bump_width_range[0]) * np.random.rand())
+            c0[i,:,:] += mult_factor * max_amplitude * np.random.rand() \
+                * np.exp(-(x_grid - x_pos)**2 / 2.0 / width**2) \
+                * np.exp(-(y_grid - y_pos)**2 / 2.0 / width**2)
+
+    return c0
+
 
 def dc_dt(c, t, n_species, n, D=None, beta=None, gamma=None, f=None, f_args=(),
           L=None, diff_multiplier=None):
@@ -75,7 +139,7 @@ def dc_dt(c, t, n_species, n, D=None, beta=None, gamma=None, f=None, f_args=(),
     return rhs
 
 
-def solve(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
+def solve(c0, time_points, D=None, beta=None, gamma=None,
           f=None, f_args=(), L=None, diff_multiplier=None, dt0=1e-6,
           dt_bounds=(0.000001, 100.0), allow_negative=False,
           vsimex_tol=0.001, vsimex_tol_buffer=0.01, k_P=0.075, k_I=0.175,
@@ -85,14 +149,14 @@ def solve(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
     """
     # Check and convert inputs
     c0, n_species, n, L, D, beta, gamma, f_args = \
-                _check_and_update_inputs(c0, L, D, beta, gamma, f_args)
+                _check_and_update_inputs(c0, L, D, beta, gamma, f, f_args)
 
     # Compute square of wave numbers
     kx, ky = utils.wave_numbers_2d(n, L=L)
     k2 = (kx**2 + ky**2)
 
     # Differencing multiplier for Laplacian
-    diff_multiplier = diff_multiplier_periodic_2d(n, order=2)
+    diff_multiplier = utils.diff_multiplier_periodic_2d(n, order=2)
 
     # If no nonlinear function
     if f is None:
@@ -100,13 +164,13 @@ def solve(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
         f_args = ()
 
     # Solving using VSIMEX
-    u_sol = vsimex_2d(
-        time_points, n_species, n, D=D, beta=beta, gamma=gamma,
-        f=f, f_args=f_args, L=L, diff_multiplier=diff_multiplier, dt0=1e-6,
-        quiet=quiet)
+    return vsimex_2d(
+        c0, time_points, n_species, n, D=D, beta=beta, gamma=gamma,
+        f=f, f_args=f_args, L=L, diff_multiplier=diff_multiplier, k2=k2,
+        dt0=dt0, dt_bounds=dt_bounds, allow_negative=allow_negative,
+        vsimex_tol=vsimex_tol, vsimex_tol_buffer=vsimex_tol_buffer, k_P=k_P,
+        k_I=k_I, k_D=k_D, s_bounds=s_bounds, quiet=quiet)
 
-    # Reshape for return
-    return u_sol
 
 def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
               f=None, f_args=(), L=None, diff_multiplier=None, k2=None,
@@ -122,7 +186,8 @@ def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
     """
 
     # Make sure all required kwargs are specified
-    if None in [D, beta, gamma, f, f_args, L, diff_multipler, k2]:
+    if any(x is None for x in
+            [D, beta, gamma, f, f_args, L, diff_multiplier, k2]):
         raise RuntimeError('D, beta, gamma, f, f_args, L, '
                            + 'diff_multipler, k2 must all be specified.')
 
@@ -149,12 +214,13 @@ def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
                   np.linalg.norm(u[0] - c0.flatten()) / np.linalg.norm(u[0]))
 
     # Pull out concentrations and compute FFTs
-    c = tuple(u_entry.reshape((n_species, *n)) for u_entry in u)
-    c_hat = np.fft.fftn(c[1], axes=(1,2))
+    c = u[1].reshape((n_species, *n))
+    c_hat = np.fft.fftn(c, axes=(1,2))
 
     # Compute initial f_hat
-    f_hat = (np.fft.fft2(f(c[0], time_points[0] + dt[0], *f_args)),
-             np.fft.fft2(f(c[1], time_points[0] + dt[0] + dt[1], *f_args)))
+    f_hat = (np.fft.fft2(
+            f(u[0].reshape((n_species, *n)), time_points[0] + dt[0], *f_args)),
+                np.fft.fft2(f(c, time_points[0] + dt[0] + dt[1], *f_args)))
 
     # Set up return variables
     u_sol = [c0.flatten()]
@@ -185,23 +251,28 @@ def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
             rel_change_step = np.linalg.norm(u_step - u[1]) / \
                                                 np.linalg.norm(u_step)
 
+            # DEBUG
+            print(t, rel_change, rel_change_step)
+            # #####
+
             # If relative change less than tolerance, take step
             if not reject_step_because_negative:
                 if rel_change_step <= vsimex_tol * (1.0 + vsimex_tol_buffer) \
                         or dt[2] <= dt_bounds[0]:
                     # Take the step
                     c_hat, c, u, t, f_hat = _take_step(
-                        c_hat, c, u, t, f_hat, c_step, u_step, dt, f, f_args)
+                            c_hat_step, c, u, t, f_hat, c_step, u_step, dt, f,
+                            f_args)
 
                     # Adjust step size
                     dt, rel_change = _adjust_step_size_pid(
                             dt, rel_change, rel_change_step, vsimex_tol, k_P,
-                            k_I, k_D, s_bounds)
+                            k_I, k_D, dt_bounds, s_bounds)
                 else:
                     # Adjust step size, but do not take step
                     # (step may already have been taken if we had neg. conc.)
-                    dt = _adjust_step_size_rejected_step(dt, rel_change_step,
-                                                         vsimex_tol, s_bounds)
+                    dt = _adjust_step_size_rejected_step(
+                          dt, rel_change_step, vsimex_tol, dt_bounds, s_bounds)
 
         # If the solution blew up, raise an exception
         if np.isnan(u[1]).any() != 0:
@@ -212,24 +283,28 @@ def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
         u_sol.append(c.flatten())
 
     # Interpolate solution
-    return utils.interpolate_solution(
+    u_interp = utils.interpolate_solution(
         np.array(u_sol).transpose(), np.array(t_sol), time_points)
 
+    # Return reshaped solution
+    return u_interp.reshape((n_species, *n, len(time_points)))
 
-def _take_step(c_hat, c, u, t, f_hat, c_step, u_step, dt, f, f_args):
+
+def _take_step(c_hat_step, c, u, t, f_hat, c_step, u_step, dt, f, f_args):
     """
     Update variables in taking the CNAB2 step.
     """
     c_hat = c_hat_step
-    c = (c[1], c_step)
+    c = c_step
     u = (u[1], u_step)
     t += dt[2]
-    f_hat = (f_hat[1], np.fft.fft2(f(c[1], t, *f_args)))
+    f_hat = (f_hat[1], np.fft.fft2(f(c, t, *f_args)))
 
     return c_hat, c, u, t, f_hat
 
 
-def _adjust_step_size_rejected_step(dt, rel_change_step, vsimex_tol, s_bounds):
+def _adjust_step_size_rejected_step(dt, rel_change_step, vsimex_tol, dt_bounds,
+                                    s_bounds):
     """
     Adjust step size for a rejected step.
     """
@@ -246,7 +321,7 @@ def _adjust_step_size_rejected_step(dt, rel_change_step, vsimex_tol, s_bounds):
 
 
 def _adjust_step_size_pid(dt, rel_change, rel_change_step, vsimex_tol, k_P,
-                          k_I, k_D, s_bounds):
+                          k_I, k_D, dt_bounds, s_bounds):
     """
     Adjust the step size using the PID controller.
     """
@@ -309,21 +384,21 @@ def cnab2_step(dt_current, dt0, c_hat, f_hat, D, beta, gamma, k2):
         Current time step
     dt0 : float
         Previous time step
+    c_hat : array_like, shape (n_species * total_n_grid_points, )
+        Current FFT of concentrations.
     f_hat : array_like, shape (n_species * total_n_grid_points, )
         Current FFT of nonlinear part of dynamics. Organized where
         first len(c_hat)/len(D) entries are flattened array of
         concentrations of first chemical species, next
         len(c_hat)/len(D) for for second chemical species, and
         so on.
-    c_hat : array_like, shape (n_species * total_n_grid_points, )
-        Current FFT of concentrations.
     D : array_like, shape (n_species, )
         Array of diffusion coefficients for all chemical species.
-    rl : array_like, shape (n_species, n_species)
-        rl[i,j] is the rate constant to the linear term in reaction
-        dynamics describing species i for chemical species j. As an
-        example, if all species have simple decay term, then rl is
-        diagonal.
+    beta : array_like, shape (n_species, )
+        Array of autoproduction constants.
+    gamma : array_like, shape (n_species, )
+        Array of degradation constants. Note that negative gamma
+        means degradation.
     k2 : array_like, shape (total_n_grid_points, )
         The square of the wave number for the grid points as a
         flattened array
@@ -368,12 +443,18 @@ def _check_and_update_inputs(c0, L, D, beta, gamma, f, f_args):
     f_args = _check_f(f, f_args)
     L = _check_L(L)
 
+    # At least one of D, beta, gamma, or f must not be None
+    if (D == 0.0).all() and (beta == 0.0).all() \
+            and (gamma == 0.0).all() and f is None:
+        raise RuntimeError(
+                'At least one of D, beta, gamma, and f must be nonzero.')
+
     return c0, n_species, n, L, D, beta, gamma, f_args
 
 
 def _check_and_update_c0(c0):
     """
-    Check c0 and convert to flattened array.
+    Check c0.
     """
 
     # Convert to Numpy array in case it's a list of lists or something
@@ -485,7 +566,7 @@ def _check_L(L):
         L = tuple(L)
 
     if type(L) != tuple or len(L) != 2:
-        raise Runtimerror('`L` must be a 2-tuple.')
+        raise RuntimeError('`L` must be a 2-tuple.')
 
     # Make sure the lengths are float
     return (float(L[0]), float(L[1]))
