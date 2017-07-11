@@ -427,6 +427,36 @@ def rkf45(f, initial_cond, time_points, args=(), dt=None,
                                 np.array(t_sol), time_points)
 
 
+def spectral_integrate_2d(f, L=None):
+    """
+    Performs 2-D integration of a function f defined on a uniform
+    periodic grid.
+
+    Parameters
+    ----------
+    f : 2D nd_array
+        Function values to integrate
+    L : 2-tuple of float, default (2*pi, 2*pi)
+        The physical extent of the system.
+
+    Returns
+    -------
+    output : float
+        The integral over both x and y.
+    """
+
+    # Size of domain
+    nx, ny = f.shape
+
+    # Specify lengths if not given
+    if L is None:
+        L = (2*np.pi, 2*np.pi)
+
+    # Compute integral
+    int_x = L[0] / nx * np.sum(f, axis=0)
+    return L[1] / ny * np.sum(int_x)
+
+
 def interpolate_solution(y, t_sol, t):
     """
     Interpolates the solution of a system of ODEs using B-splines.

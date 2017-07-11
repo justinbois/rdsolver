@@ -171,6 +171,29 @@ def test_wave_numbers_2d():
     assert (correct_y == ky).all()
 
 
+def test_spectral_integrate_2d():
+    L = (2*np.pi, 2*np.pi)
+    n = (64, 64)
+    x, y, xx, yy, x_grid, y_grid = rd.utils.grid_points_2d(n, L=L)
+    f = np.exp(np.sin(x_grid) * np.cos(y_grid))
+    correct = 44.649967131680145266
+    assert np.isclose(rd.utils.spectral_integrate_2d(f, L=L), correct)
+
+    L = (2*np.pi, 2*np.pi)
+    n = (64, 128)
+    x, y, xx, yy, x_grid, y_grid = rd.utils.grid_points_2d(n, L=L)
+    f = np.exp(np.sin(x_grid) * np.cos(y_grid))
+    correct = 44.649967131680145266
+    assert np.isclose(rd.utils.spectral_integrate_2d(f, L=L), correct)
+
+    L = (2*np.pi, 4*np.pi)
+    n = (128, 64)
+    x, y, xx, yy, x_grid, y_grid = rd.utils.grid_points_2d(n, L=L)
+    f = np.exp(np.sin(x_grid) * np.cos(y_grid))
+    correct = 89.299934263360290533
+    assert np.isclose(rd.utils.spectral_integrate_2d(f, L=L), correct)
+
+
 def test_diff_multiplier_periodic_1d():
     # Error out on odd number of grid points
     with pytest.raises(RuntimeError) as excinfo:
