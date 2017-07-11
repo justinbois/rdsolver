@@ -2,6 +2,7 @@ import itertools
 import warnings
 
 import numpy as np
+import scipy.interpolate
 
 import skimage
 
@@ -13,20 +14,20 @@ import bokeh.plotting
 import ipywidgets
 
 
-def display_notebook(c, time_points, plot_height=400):
+def display_notebook(time_points, c, plot_height=400):
     """
     Build display of results of RD simulation.
 
     Parameters
     ----------
+    time_points : ndarray
+        Time points where concentrations were sampled.
     c : ndarray
         Output of rd.solve(), a 4D array.
         Index 0: Species
         Index 1: x-coordinate
         Index 2: y-coordinate
         Index 3: time coodinate
-    time_points : ndarray
-        Timepoints
     plot_height : int, default 400
         Height of plot, in pixels.
 
@@ -66,7 +67,7 @@ def display_notebook(c, time_points, plot_height=400):
     plot_width = int(m/n * plot_height)
     p = bokeh.plotting.figure(plot_height=plot_height, plot_width=plot_width,
                               x_range=[0, m], y_range=[0, n],
-                              tools='pan,box_zoom,wheel_zoom,reset,resize')
+                              tools='pan,box_zoom,wheel_zoom,save,reset,resize')
 
     # If single channel, display with viridis
     if c.shape[0] == 1:
@@ -145,7 +146,7 @@ def display_single_frame(c, i=-1, plot_height=400, notebook=True,
     plot_width = int(m/n * plot_height)
     p = bokeh.plotting.figure(plot_height=plot_height, plot_width=plot_width,
                               x_range=[0, m], y_range=[0, n],
-                              tools='pan,box_zoom,wheel_zoom,reset,resize')
+                              tools='pan,box_zoom,wheel_zoom,save,reset,resize')
 
     # If single channel, display with viridis
     if c.shape[0] == 1:
@@ -226,7 +227,7 @@ def im_merge_cmy(im_cyan, im_mag, im_yell=None, im_cyan_max=None,
             or (im_yell is not None and im_yell_max < im_yell.max()):
         raise RuntimeError('Inputted max of channel > max of inputted channel.')
 
-    if (im_cyan < 0).any() or (im_max < 0).any() \
+    if (im_cyan < 0).any() or (im_mag < 0).any() \
             or (im_yell is not None and (im_yell < 0).any()):
         raise RuntimeError('Negative pixel values encountered.')
 
@@ -283,3 +284,63 @@ def rgb_to_rgba32(im):
 
     # Reshape into 32 bit. Must flip up/down for proper orientation
     return np.flipud(im_rgba.view(dtype=np.int32).reshape((n, m)))
+
+
+def interpolate_2d(a, n_interp_points=(200, 200)):
+    """
+    Interplate a 2D array.
+
+    Parameters
+    ----------
+    a : 2D ndarray
+        Array to be interplated
+    n_interp_points : 2-tuple of ints
+        Number of interpolation points in the row and column
+        dimension, respectively.
+
+    Returns
+    -------
+    output : ndarray, shape n_interp_points
+        Interpolated array.
+    """
+
+    # Set up grids
+    x = np.arange(a.shape[0])
+    y = np.arange(a.shape[1])
+    xx, yy = np.meshgrid(x, y, indexing='ij')
+    x_interp = np.linspace(x[0], x[-1], n_interp_points[0])
+    y_interp = np.linspace(y[0], y[-1], n_interp_points[1])
+    xx_interp, yy_interp = np.meshgrid(x_interp, y_interp, indexing='ij')
+
+    # Perform B-spline interpolation
+    spline = scipy.interpolate.RectBivariateSpline(x, y, a, s=0)
+    a_flat = spline.ev(xx_interp.flatten(), yy_interp.flatten())
+    return a_flat.reshape(n_interp_points)
+
+
+def interpolate_concs(c, n_interp_points=(200, 200)):
+    """
+    Performs interpolation of all concentration fields.
+
+    Parameters
+    ----------
+    c : 4D ndarray
+        Solution of RD equations.
+    n_interp_points : 2-tuple of ints
+        Number of interpolation points in the row and column
+        dimension, respectively.
+
+    Returns
+    -------
+    output : ndarray, shape (c.shape[0], *n_interp_points, c.shape[3])
+        Interpolated concentrations.
+    """
+    # Set up output array
+    c_interp = np.empty((c.shape[0], *n_interp_points, c.shape[-1]))
+
+    # Interpolate each species for each time point.
+    for i in range(c.shape[-1]):
+        for j in range(c.shape[0]):
+            c_interp[j,:,:,i] = interpolate_2d(c[j,:,:,i], n_interp_points)
+
+    return c_interp

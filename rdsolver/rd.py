@@ -538,7 +538,7 @@ def _check_beta_gamma_D(x, n_species, name='beta, gamma, D arrays'):
 
     # Make sure it's a numpy array
     if type(x) in [list, tuple]:
-        D = np.array(x)
+        x = np.array(x)
 
     if len(x.shape) != 1:
         raise RuntimeError(f'{name} must be a one-dimensional array.')
