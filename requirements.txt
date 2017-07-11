@@ -1,2 +1,5 @@
 numpy
 scipy
+scikit-image
+bokeh
+ipywidgets
