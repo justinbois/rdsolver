@@ -15,7 +15,22 @@ import scipy.special
 
 from . import utils
 
-def initial_condition(uniform_conc, n, L=None, n_bumps=20,
+def asdm(d=0.05, mu=1.4):
+    """
+    Give f, f_args, beta, gamma, and D for the dimensionelss
+    activator-substrate depletion model (ASDM).
+    """
+    D = np.array([d, 1.0])
+    beta = np.array([0.0, mu])
+    gamma = np.array([-1.0, 0.0])
+    def f(c, t, mu):
+        a2s = c[0,:,:]**2 * c[1,:,:]
+        return np.stack((a2s, -mu * a2s))
+    f_args = (mu,)
+
+    return D, beta, gamma, f, f_args
+
+def initial_condition(uniform_conc=None, n=None, L=None, n_bumps=20,
                       bump_width_range=(0.025, 0.1), max_amplitude=0.005):
     """
     Generate initial condition as a small perturbation from uniform c0.
@@ -49,6 +64,11 @@ def initial_condition(uniform_conc, n, L=None, n_bumps=20,
     .. Note that all bumps are positive perturbations. This is to
        prevent the possibility of negative concentrations.
     """
+    if uniform_conc is None:
+        raise RuntimeError('uniform_conc must be given.')
+
+    if n is None:
+        raise RuntimeError('n must be given as a 2-tuple.')
 
     # Get dimensions
     L = _check_L(L)
@@ -134,42 +154,33 @@ def dc_dt(c, t, n_species, n, D=None, beta=None, gamma=None, f=None, f_args=(),
 
     # Nonlinear terms
     if f is not None:
-        rhs += f(c.reshape((n_species, n_tot)), t, *f_args).flatten()
+        rhs += f(c.reshape((n_species, *n)), t, *f_args).flatten()
 
     return rhs
 
 
-def solve(c0, time_points, D=None, beta=None, gamma=None,
-          f=None, f_args=(), L=None, diff_multiplier=None, dt0=1e-6,
-          dt_bounds=(0.000001, 100.0), allow_negative=False,
-          vsimex_tol=0.001, vsimex_tol_buffer=0.01, k_P=0.075, k_I=0.175,
-          k_D=0.01, s_bounds=(0.1, 10.0), quiet=False):
+def rkf45_2d(c0, time_points, n_species, n, D=None, beta=None,
+             gamma=None, f=None, f_args=(), L=None, diff_multiplier=None,
+             dt0=0.000001, **kw):
     """
-    Solve a reaction-diffusion system in two-dimensions.
+    Solve using Runge-Kutta-Fehlberg.
     """
-    # Check and convert inputs
-    c0, n_species, n, L, D, beta, gamma, f_args = \
-                _check_and_update_inputs(c0, L, D, beta, gamma, f, f_args)
 
-    # Compute square of wave numbers
-    kx, ky = utils.wave_numbers_2d(n, L=L)
-    k2 = (kx**2 + ky**2)
+    # Make sure all required kwargs are specified
+    if any(x is None for x in
+            [D, beta, gamma, f, f_args, L, diff_multiplier]):
+        raise RuntimeError('D, beta, gamma, f, f_args, L, '
+                           + 'diff_multipler, must all be specified.')
 
-    # Differencing multiplier for Laplacian
-    diff_multiplier = utils.diff_multiplier_periodic_2d(n, order=2)
+    # Total number of grid points
+    n_tot = n[0] * n[1]
 
-    # If no nonlinear function
-    if f is None:
-        f = lambda x, t: np.zeros_like(x)
-        f_args = ()
+    # Do Runge-Kutta-Fehlberg
+    args = (n_species, n, D, beta, gamma, f, f_args, L, diff_multiplier)
+    c = utils.rkf45(dc_dt, c0.flatten(), time_points, args=args, dt=dt0)
 
-    # Solving using VSIMEX
-    return vsimex_2d(
-        c0, time_points, n_species, n, D=D, beta=beta, gamma=gamma,
-        f=f, f_args=f_args, L=L, diff_multiplier=diff_multiplier, k2=k2,
-        dt0=dt0, dt_bounds=dt_bounds, allow_negative=allow_negative,
-        vsimex_tol=vsimex_tol, vsimex_tol_buffer=vsimex_tol_buffer, k_P=k_P,
-        k_I=k_I, k_D=k_D, s_bounds=s_bounds, quiet=quiet)
+    # Reshape and return
+    return c.reshape((n_species, *n, len(time_points)))
 
 
 def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
@@ -251,10 +262,6 @@ def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
             rel_change_step = np.linalg.norm(u_step - u[1]) / \
                                                 np.linalg.norm(u_step)
 
-            # DEBUG
-            print(t, rel_change, rel_change_step)
-            # #####
-
             # If relative change less than tolerance, take step
             if not reject_step_because_negative:
                 if rel_change_step <= vsimex_tol * (1.0 + vsimex_tol_buffer) \
@@ -288,6 +295,39 @@ def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
 
     # Return reshaped solution
     return u_interp.reshape((n_species, *n, len(time_points)))
+
+
+def solve(c0, time_points, D=None, beta=None, gamma=None,
+          f=None, f_args=(), L=None, diff_multiplier=None, dt0=1e-6,
+          dt_bounds=(0.000001, 100.0), allow_negative=False,
+          vsimex_tol=0.001, vsimex_tol_buffer=0.01, k_P=0.075, k_I=0.175,
+          k_D=0.01, s_bounds=(0.1, 10.0), quiet=False, solver=vsimex_2d):
+    """
+    Solve a reaction-diffusion system in two-dimensions.
+    """
+    # Check and convert inputs
+    c0, n_species, n, L, D, beta, gamma, f_args = \
+                _check_and_update_inputs(c0, L, D, beta, gamma, f, f_args)
+
+    # Compute square of wave numbers
+    kx, ky = utils.wave_numbers_2d(n, L=L)
+    k2 = (kx**2 + ky**2)
+
+    # Differencing multiplier for Laplacian
+    diff_multiplier = utils.diff_multiplier_periodic_2d(n, order=2)
+
+    # If no nonlinear function
+    if f is None:
+        f = lambda x, t: np.zeros_like(x)
+        f_args = ()
+
+    # Solving using VSIMEX
+    return solver(
+        c0, time_points, n_species, n, D=D, beta=beta, gamma=gamma,
+        f=f, f_args=f_args, L=L, diff_multiplier=diff_multiplier, k2=k2,
+        dt0=dt0, dt_bounds=dt_bounds, allow_negative=allow_negative,
+        vsimex_tol=vsimex_tol, vsimex_tol_buffer=vsimex_tol_buffer, k_P=k_P,
+        k_I=k_I, k_D=k_D, s_bounds=s_bounds, quiet=quiet)
 
 
 def _take_step(c_hat_step, c, u, t, f_hat, c_step, u_step, dt, f, f_args):

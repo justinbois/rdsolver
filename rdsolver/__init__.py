@@ -4,6 +4,7 @@
 
 from .rd import *
 from . import utils
+from . import viz
 
 __author__ = """Justin Bois"""
 __email__ = 'bois@caltech.edu'
