@@ -451,13 +451,22 @@ def cnab2_step(dt_current, dt0, c_hat, f_hat, D, beta, gamma, k2):
 
     omega = dt_current / dt0
 
+    # Shape
+    n = c_hat.shape[1:]
+
     # Nonlinear terms
     c_hat_step = (1 + omega/2) * f_hat[1] - omega/2 * f_hat[0]
 
     # Linear terms
     for i, dbg in enumerate(zip(D, beta, gamma)):
         d, b, g = dbg
-        c_hat_step[i,:,:] += b + (1/dt_current - k2*d/2 + g/2) * c_hat[i,:,:]
+        # Add constant term, correcting for DC values in Numpy's FFT
+        c_hat_step[i,0,0] += b * n[0] * n[1]
+
+        # Add other linear terms
+        c_hat_step[i,:,:] += (1/dt_current - k2*d/2 + g/2) * c_hat[i,:,:]
+
+        # Solve for step
         c_hat_step[i,:,:] /= (1/dt_current + k2*d/2 - g/2)
 
     return c_hat_step

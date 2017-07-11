@@ -4,6 +4,22 @@ import pytest
 import rdsolver as rd
 import rdsolver.rd
 
+def test_solve():
+    L = (10, 10)
+    n = (32, 32)
+    D = None
+    beta = 1.4 * np.ones(2)
+    gamma = None
+    f = None
+    f_args = None
+    time_points = np.linspace(0, 10, 50)
+    c0 = np.ones((2, *n))
+    c = rd.solve(c0, time_points, D=D, beta=beta, gamma=gamma, f=f,
+                 f_args=f_args, L=L, solver=rd.vsimex_2d)
+    x = np.array([rd.utils.spectral_integrate_2d(c[1,:,:,i], L=L)
+                        for i in range(len(time_points))])
+    slope, intercept = np.polyfit(time_points, x, 1)
+    assert np.abs(slope - 140) < 0.001
 
 def test_check_beta_gamma_D():
     correct = np.array([2.0])
@@ -227,13 +243,15 @@ def check_cnab2_expressions(c_hat_step, dt_current, dt0, c_hat, f_hat, D, beta,
     lhs = (c_hat_step - c_hat) / dt_current
 
     omega = dt_current / dt0
+    n = c_hat.shape[1:]
+
     # Nonlinear terms
     rhs = (1 + omega/2) * f_hat[1] - omega/2 * f_hat[0]
 
     # Linear terms
     for i, dbg in enumerate(zip(D, beta, gamma)):
         d, b, g = dbg
-        rhs[i,:,:] += b
+        rhs[i,0,0] += b * n[0] * n[1]
         rhs[i,:,:] += (g - k2 * d) * (c_hat_step[i,:,:] + c_hat[i,:,:]) / 2
 
     assert np.isclose(lhs, rhs).all()
@@ -243,7 +261,7 @@ def test_cnab2_step():
     dt_current = 1
     dt0 = 1
     n = (64, 64)
-    c = (np.ones((1,) + n), np.ones((1,) + n))
+    c = (np.ones((1, *n)), np.ones((1, *n)))
     c_hat = np.fft.fftn(c[1], axes=(1, 2))
     f = lambda x, t: x
     f_hat = tuple([np.fft.fftn(f(c_val, 0), axes=(1, 2)) for c_val in c])
@@ -260,7 +278,7 @@ def test_cnab2_step():
     dt_current = 1
     dt0 = 1.3
     n = (64, 128)
-    c = (np.ones((1,) + n), np.ones((1,) + n))
+    c = (np.ones((1, *n)), np.ones((1, *n)))
     c_hat = np.fft.fftn(c[1], axes=(1, 2))
     f = lambda x, t: x
     f_hat = tuple([np.fft.fftn(f(c_val, 0), axes=(1, 2)) for c_val in c])
@@ -277,7 +295,7 @@ def test_cnab2_step():
     dt_current = 1
     dt0 = 1.3
     n = (64, 128)
-    c = (np.ones((2,) + n), np.ones((2,) + n))
+    c = (np.ones((2, *n)), np.ones((2, *n)))
     c_hat = np.fft.fftn(c[1], axes=(1, 2))
     f = lambda x, t: x
     f_hat = tuple([np.fft.fftn(f(c_val, 0), axes=(1, 2)) for c_val in c])
@@ -294,7 +312,7 @@ def test_cnab2_step():
     dt_current = 1
     dt0 = 1.3
     n = (64, 128)
-    c = (np.ones((2,) + n), np.ones((2,) + n))
+    c = (np.ones((2, *n)), np.ones((2, *n)))
     c_hat = np.fft.fftn(c[1], axes=(1, 2))
     f = lambda x, t: x
     f_hat = tuple([np.fft.fftn(f(c_val, 0), axes=(1, 2)) for c_val in c])
