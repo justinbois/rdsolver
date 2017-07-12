@@ -1,3 +1,4 @@
+import numba
 import numpy as np
 import scipy.interpolate
 
@@ -382,7 +383,7 @@ def rkf45_step(f, y, t, args, h, tol, s_bounds, h_min):
 
 
 def rkf45(f, initial_cond, time_points, args=(), dt=None,
-          tol=1.0e-7, s_bounds = (0.1, 10.0), h_min=0.0):
+          tol=1.0e-7, s_bounds=(0.1, 10.0), h_min=0.0):
     """
     Solve a system of ODEs using explicit Runge-Kutta-Fehlberg 4-5
     time stepping.
@@ -425,6 +426,23 @@ def rkf45(f, initial_cond, time_points, args=(), dt=None,
 
     return interpolate_solution(np.array(y).transpose(),
                                 np.array(t_sol), time_points)
+
+
+@numba.jit(nopython=True)
+def laplacian_fd(a, hx, hy):
+    dx = -2 * np.copy(a)
+    dy = -2 * np.copy(a)
+    dx[1:,:] += a[:-1,:]
+    dx[0,:] += a[-1,:]
+    dx[:-1, :] += a[1:,:]
+    dx[-1, :] += a[0,:]
+
+    dy[:,1:] += a[:,:-1]
+    dy[:,0] += a[:,-1]
+    dy[:,:-1] += a[:,1:]
+    dy[:,-1] += a[:,0]
+
+    return dx/hx**2 + dy/hy**2
 
 
 def spectral_integrate_2d(f, L=None):

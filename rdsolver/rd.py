@@ -10,6 +10,7 @@ can in general be a function of time.
 """
 import inspect
 
+import numba
 import numpy as np
 import scipy.special
 
@@ -243,8 +244,8 @@ def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
         next_time_point_index = np.searchsorted(time_points, t)
         while t < time_points[next_time_point_index]:
             # Compute the CNAB2 step
-            c_hat_step = cnab2_step(dt[2], dt[1], c_hat, f_hat, D, beta,
-                                    gamma, k2)
+            c_hat_step = cnab2_step(dt[2], dt[1], c_hat, f_hat[1],
+                                    f_hat[0], D, beta, gamma, k2)
 
             # Convert to real space and build u_step
             c_step = np.fft.ifftn(c_hat_step, axes=(1, 2)).real
@@ -321,7 +322,12 @@ def solve(c0, time_points, D=None, beta=None, gamma=None,
         f = lambda x, t: np.zeros_like(x)
         f_args = ()
 
-    # Solving using VSIMEX
+    # Solve
+    if solver == rkf45_numba:
+        return rkf45_numba(c0, time_points, n_species, n, D, beta, gamma,
+                           f, f_args, L, dt0, tol=1e-7,
+                           s_bounds=(0.1, 10.0), h_min=0.0)
+
     return solver(
         c0, time_points, n_species, n, D=D, beta=beta, gamma=gamma,
         f=f, f_args=f_args, L=L, diff_multiplier=diff_multiplier, k2=k2,
@@ -338,7 +344,7 @@ def _take_step(c_hat_step, c, u, t, f_hat, c_step, u_step, dt, f, f_args):
     c = c_step
     u = (u[1], u_step)
     t += dt[2]
-    f_hat = (f_hat[1], np.fft.fft2(f(c, t, *f_args)))
+    f_hat = (f_hat[1], np.fft.fftn(f(c, t, *f_args), axes=(1, 2)))
 
     return c_hat, c, u, t, f_hat
 
@@ -397,7 +403,7 @@ def _check_for_negative_concs(u_step, c_step, c_hat_step, dt, dt_bounds,
         # If we can't reduce step size any more
         if dt[2] <= dt_bounds[0]:
             c_step[np.nonzero(c_step[j] < 0.0)] = tiny_conc
-            c_hat_step = np.fft.fftn(c_step, axis=(1, 2))
+            c_hat_step = np.fft.fftn(c_step, axes=(1, 2))
             u_step = c_step.flatten()
             reject_step = False
             if not quiet:
@@ -413,7 +419,8 @@ def _check_for_negative_concs(u_step, c_step, c_hat_step, dt, dt_bounds,
     return u_step, c_step, c_hat_step, reject_step
 
 
-def cnab2_step(dt_current, dt0, c_hat, f_hat, D, beta, gamma, k2):
+@numba.jit(nopython=True)
+def cnab2_step(dt_current, dt0, c_hat, f_hat, f_hat0, D, beta, gamma, k2):
     """
     Takes a Crank-Nicolson/Adams-Bashforth (2nd order) step for
     RD system in Fourier space.
@@ -424,14 +431,12 @@ def cnab2_step(dt_current, dt0, c_hat, f_hat, D, beta, gamma, k2):
         Current time step
     dt0 : float
         Previous time step
-    c_hat : array_like, shape (n_species * total_n_grid_points, )
+    c_hat : array_like, shape (n_species, n[0], n[1])
         Current FFT of concentrations.
-    f_hat : array_like, shape (n_species * total_n_grid_points, )
-        Current FFT of nonlinear part of dynamics. Organized where
-        first len(c_hat)/len(D) entries are flattened array of
-        concentrations of first chemical species, next
-        len(c_hat)/len(D) for for second chemical species, and
-        so on.
+    f_hat : array_like, shape (n_species, n[0], n[1])
+        Current FFT of nonlinear part of dynamics.
+    f_hat0 : array_like, shape (n_species, n[0], n[1])
+        FFT of nonlinear part of dynamics from previous step.
     D : array_like, shape (n_species, )
         Array of diffusion coefficients for all chemical species.
     beta : array_like, shape (n_species, )
@@ -455,7 +460,7 @@ def cnab2_step(dt_current, dt0, c_hat, f_hat, D, beta, gamma, k2):
     n = c_hat.shape[1:]
 
     # Nonlinear terms
-    c_hat_step = (1 + omega/2) * f_hat[1] - omega/2 * f_hat[0]
+    c_hat_step = (1 + omega/2) * f_hat - omega/2 * f_hat0
 
     # Linear terms
     for i, dbg in enumerate(zip(D, beta, gamma)):
@@ -471,6 +476,159 @@ def cnab2_step(dt_current, dt0, c_hat, f_hat, D, beta, gamma, k2):
 
     return c_hat_step
 
+def make_rhs(c, t, D, beta, gamma, hx, hy, f, f_args):
+    """
+    Make a numba's version of dc_dt.
+    """
+    @numba.jit(nopython=True)
+    def rhs(c, t, D, beta, gamma, hx, hy, f_args):
+        result = np.empty_like(c)
+
+        # Linear terms of right-hand side
+        for i, dbg in enumerate(zip(D, beta, gamma)):
+            d, b, g = dbg
+            c_view = c[i,:,:]
+            result[i,:,:] = d * utils.laplacian_fd(c_view, hx, hy) \
+                                    + b + g * c_view
+
+        # Nonlinear terms
+        if f is not None:
+            result += f(c, t, *f_args)
+
+        return result
+
+    return rhs
+
+
+def make_rkf45_step(y, t, D, beta, gamma, hx, hy, rhs, f_args, h,
+                     tol, s_min, s_max, h_min):
+
+    @numba.jit(nopython=True)
+    def rkf45_step_numba(y, t, D, beta, gamma, hx, hy, f_args, h,
+                         tol, s_min, s_max, h_min):
+        """
+        """
+        k_1 = h * rhs(y, t, D, beta, gamma, hx, hy, f_args)
+
+        y_2 = y + k_1 / 4.0
+        k_2 = h * rhs(y_2, t + h / 4.0, D, beta, gamma, hx, hy, f_args)
+
+        y_3 = y + (3.0 * k_1 + 9.0 * k_2) / 32.0
+        k_3 = h * rhs(y_3, t + 3.0 * h / 8.0, D, beta, gamma, hx, hy, f_args)
+
+        y_4 = y + (1932.0 * k_1 - 7200.0 * k_2 + 7296.0 * k_3) / 2197.0
+        k_4 = h * rhs(y_4, t + 12.0 * h / 13.0, D, beta, gamma, hx, hy, f_args)
+
+        y_5 = y + (8341.0 * k_1 - 32832.0 * k_2 + 29440.0 * k_3
+                   - 845.0 * k_4) / 4104.0
+        k_5 = h * rhs(y_5, t + h, D, beta, gamma, hx, hy, f_args)
+
+        y_6 = y + (-6080.0 * k_1 + 41040.0 * k_2 - 28352.0 * k_3
+                    + 9295.0 * k_4 - 5643.0 * k_5) / 20520.0
+        k_6 = h * rhs(y_6, t + h / 2.0, D, beta, gamma, hx, hy, f_args)
+
+        # Calculate error
+        error = (np.abs(209 * k_1 - 2252.8 * k_3 - 2197.0 * k_4
+                        + 1504.8 * k_5 + 2736.0 * k_6) / 75240.0).max()
+
+        # Either don't take a step or use the RK4 step
+        if error < tol or h <= h_min:
+            y_new = y + (2375.0 * k_1 + 11264.0 * k_3 + 10985 * k_4
+                         - 4104.0 * k_5) / 20520.0
+            t += h
+        else:
+            y_new = y
+
+        # Compute scaling for new step size
+        if error == 0.0:
+            s = s_max
+        else:
+            s = (tol * h / 2.0 / error)**0.25
+        if s < s_min:
+            s = s_min
+        elif s > s_max:
+            s = s_max
+
+        return y_new, t, max(s * h, h_min)
+
+    return rkf45_step_numba
+
+
+def make_rkf45_numba(c0, time_points, n_species, n, D, beta, gamma, f, f_args,
+                     hx, hy, dt0, tol, s_min, s_max, h_min=0.0):
+
+    # Make sure f is numba'd
+    if type(f) != type(f) == numba.targets.registry.CPUDispatcher:
+        raise RuntimeError("f must be a numba'd function.")
+
+    # Make Numba'd funcs
+    rhs = make_rhs(c0, time_points[0], D, beta, gamma, hx, hy, f, f_args)
+    rkf45_step_numba = make_rkf45_step(c0, time_points[0], D, beta, gamma, hx,
+                                       hy, rhs, f_args, dt0, tol, s_min,
+                                       s_max, h_min)
+
+    @numba.jit(nopython=True)
+    def rkf45_solve(c0, time_points, n_species, n, D, beta, gamma, f_args,
+                    hx, hy, dt0, tol, s_min, s_max, h_min):
+
+        # Total number of data for each time point
+        n_tot = n_species * n[0] * n[1]
+
+        # Set up return variables
+        t_sol = np.array([time_points[0]])
+        t = time_points[0]
+        i_max = len(time_points)
+        y = c0.flatten().reshape((1, n_tot))
+        y_0 = c0
+        i = 1
+        h = dt0
+
+        while i < i_max:
+            while t < time_points[i]:
+                y_0, t, h = rkf45_step_numba(
+                        y_0, t, D, beta, gamma, hx, hy, f_args, h, tol, s_min,
+                        s_max, h_min)
+            if t > t_sol[-1]:
+                y = np.concatenate((y, y_0.flatten().reshape((1, n_tot))))
+                t_sol = np.concatenate((t_sol, np.array([t])))
+            i += 1
+            if np.isnan(y_0).any():
+                raise RuntimeError('Solution blew up! Try reducing dt.')
+
+        return t_sol, y
+
+    return rkf45_solve
+
+
+def rkf45_numba(c0, time_points, n_species, n, D, beta, gamma, f, f_args,
+                L, dt0, tol=1e-7, s_bounds=(0.1, 10.0), h_min=0.0):
+    """
+    """
+
+    if f is None:
+        @numba.jit(nopython=True, cache=True)
+        def f(x, t):
+            return 0.0
+
+    # Grid spacing
+    hx = L[0] / n[0]
+    hy = L[1] / n[1]
+
+    # Scale on step size changing
+    s_min, s_max = s_bounds
+
+    # Make Numba'd func
+    rkf45_solve = make_rkf45_numba(c0, time_points, n_species, n, D, beta,
+                gamma, f, f_args, hx, hy, dt0, tol, s_min, s_max, h_min)
+
+    # Solve
+    t_sol, y = rkf45_solve(c0, time_points, n_species, n, D, beta, gamma,
+                           f_args, hx, hy, dt0, tol, s_min, s_max, h_min)
+
+    y_interp = utils.interpolate_solution(np.array(y).transpose(),
+                                          np.array(t_sol), time_points)
+
+    return y_interp.reshape((n_species, *n, len(time_points)))
 
 def _check_and_update_inputs(c0, L, D, beta, gamma, f, f_args):
     """
