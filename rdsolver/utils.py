@@ -225,7 +225,7 @@ def diff_periodic_fft_2d(f, order=1, L=None, real_data=True,
 
     Parameters
     ----------
-    f : array_like, shape (ny, nx)
+    f : array_like, shape (nx, ny)
         Array of function values to be used in derivative calculation.
     order : int, default 1
         Order of the derivative to calculate.

@@ -10,7 +10,7 @@ This package solves a simple problem: reaction diffusion dynamics in two dimensi
 
 ![RD PDE](imgs/RD_PDE.png)
 
-Here, each chemical species is indicated by the subscript *i* and the physical parameters *D<sub>i</sub>*, *β<sub>i</sub>*, and *γ<sub>i</sub>* are constants in space and time. The coordinates are Cartesian and the boundary conditions periodic.
+Here, each chemical species is indicated by the subscript *i* and the physical parameters *D<sub>i</sub>*, *β<sub>i</sub>*, and *γ<sub>ij</sub>* are constants in space and time. Note that summation over like indices in the above equation is not assumed; only the explicit summation is performed. The coordinates are Cartesian and the boundary conditions periodic.
 
 ## Installation
 

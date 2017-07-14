@@ -14,22 +14,10 @@ import numba
 import numpy as np
 import scipy.special
 
+import tqdm
+
 from . import utils
 
-def asdm(d=0.05, mu=1.4):
-    """
-    Give f, f_args, beta, gamma, and D for the dimensionelss
-    activator-substrate depletion model (ASDM).
-    """
-    D = np.array([d, 1.0])
-    beta = np.array([0.0, mu])
-    gamma = np.array([-1.0, 0.0])
-    def f(c, t, mu):
-        a2s = c[0,:,:]**2 * c[1,:,:]
-        return np.stack((a2s, -mu * a2s))
-    f_args = (mu,)
-
-    return D, beta, gamma, f, f_args
 
 def initial_condition(uniform_conc=None, n=None, L=None, n_bumps=20,
                       bump_width_range=(0.025, 0.1), max_amplitude=0.005):
@@ -91,7 +79,7 @@ def initial_condition(uniform_conc=None, n=None, L=None, n_bumps=20,
       * (1.0 - scipy.special.erf(40.0 * (y_grid - 0.9 * L[1]) / L[1])) / 2.0
 
     # Make bumps
-    c0 = np.ones((n_species, *n))
+    c0 = np.stack([u * np.ones(n) for u in uniform_conc])
     for i in range(n_species):
         for j in range(n_bumps):
             x_pos = np.random.rand() * L[0]
@@ -105,7 +93,7 @@ def initial_condition(uniform_conc=None, n=None, L=None, n_bumps=20,
     return c0
 
 
-def dc_dt(c, t, n_species, n, D=None, beta=None, gamma=None, f=None, f_args=(),
+def dc_dt(c, t, n_species, n, D, beta, gamma, f=None, f_args=(),
           L=None, diff_multiplier=None):
     """
     Right hand side of R-D dynamics in real space.
@@ -123,41 +111,50 @@ def dc_dt(c, t, n_species, n, D=None, beta=None, gamma=None, f=None, f_args=(),
         Array of diffusion coefficients for species.
     beta : array_like, shape (n_species, )
         Array of autoproduction constants.
-    gamma : array_like, shape (n_species, )
-        Array of degradation constants. Note that negative gamma
-        means degradation.
+    gamma : array_like, shape (n_species, n_species)
+        Array of linear reaction constants.
     f : function
         Function to compute the nonlinear terms of the dynamics.
         Call signature f(c, t, *f_args), where c[0] is concentration
         of species 0, c[1] is concentration of species 2, etc.
     f_args : tuple, default ()
     """
-    rhs = np.empty_like(c)
-    n_tot = n[0] * n[1]
 
-    if D is None:
-        D = np.zeros(n_species)
+    # Reshape c for convenience
+    c2d = c.reshape((n_species, *n))
 
-    if beta is None:
-        beta = np.zeros(n_species)
+    # Make sure gamma is the correct data type
+    gamma = gamma.astype(c.dtype)
 
-    if gamma is None:
-        gamma = np.zeros(n_species)
+    # Initialize dc_dt
+    rhs = np.empty_like(c2d)
 
-    # Linear terms of right-hand side
-    for i, dbg in enumerate(zip(D, beta, gamma)):
-        d, b, g = dbg
-        i0 = i * n_tot
-        i1 = (i+1) * n_tot
-        rhs[i0:i1] = d * utils.laplacian_flat_periodic_2d(
-                    c[i0:i1], n, L=L, diff_multiplier=diff_multiplier)
-        rhs[i0:i1] += b + g * c[i0:i1]
+    # Compute diffusive and constant production terms
+    for i in range(n_species):
+        dx, dy = utils.diff_periodic_fft_2d(
+                    c2d[i,:,:], order=2, L=L, diff_multiplier=diff_multiplier)
+        rhs[i,:,:] = beta[i] + D[i] * (dx + dy)
+
+    # Other linear terms
+    rhs += _multiply_gamma(gamma, c2d)
 
     # Nonlinear terms
     if f is not None:
-        rhs += f(c.reshape((n_species, *n)), t, *f_args).flatten()
+        rhs += f(c2d, t, *f_args)
 
-    return rhs
+    return rhs.flatten()
+
+
+@numba.jit(nopython=True)
+def _multiply_gamma(gamma, c):
+    """
+    Matrix multiply gamma time concentration array.
+    """
+    out = np.empty_like(c)
+    for i in range(c.shape[1]):
+        for j in range(c.shape[2]):
+            out[:,i,j] = np.dot(gamma, c[:,i,j])
+    return out
 
 
 def rkf45_2d(c0, time_points, n_species, n, D=None, beta=None,
@@ -206,6 +203,9 @@ def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
     # Total number of grid points
     n_tot = n[0] * n[1]
 
+    # Make sure gamma is a float for RKF stepping
+    gamma = gamma.astype(np.float)
+
     # Tiny concentration
     tiny_conc = 1e-9
 
@@ -239,6 +239,13 @@ def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
     t = time_points[0] + dt[0] + dt[1]
     t_sol = [time_points[0]]
 
+    # Make sure gamma is complex
+    gamma = gamma.astype(np.complex128)
+
+    # Set up progress bar
+    pbar = tqdm.tqdm(total=len(time_points))
+    pbar_i = 0
+
     # Take the time steps
     while t < time_points[-1]:
         next_time_point_index = np.searchsorted(time_points, t)
@@ -253,9 +260,10 @@ def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
 
             # Perform check for negative concentrations
             if not allow_negative:
-                u_step, c_step, c_hat_step, reject_step_because_negative = \
+                u_step, c_step, c_hat_step, reject_step_because_negative, dt = \
                     _check_for_negative_concs(u_step, c_step, c_hat_step, dt,
-                                              dt_bounds, tiny_conc=tiny_conc, quiet=quiet)
+                                              dt_bounds, tiny_conc=tiny_conc,
+                                              quiet=quiet)
             else:
                 reject_step_because_negative = False
 
@@ -289,10 +297,15 @@ def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
         # Store outputs
         t_sol.append(t)
         u_sol.append(c.flatten())
+        new_pbar_i = np.searchsorted(time_points, t)
+        pbar.update(new_pbar_i - pbar_i)
+        pbar_i = new_pbar_i
 
     # Interpolate solution
     u_interp = utils.interpolate_solution(
         np.array(u_sol).transpose(), np.array(t_sol), time_points)
+
+    pbar.close()
 
     # Return reshaped solution
     return u_interp.reshape((n_species, *n, len(time_points)))
@@ -324,6 +337,7 @@ def solve(c0, time_points, D=None, beta=None, gamma=None,
 
     # Solve
     if solver == rkf45_numba:
+        raise RuntimeError('rkf45 currently not functioning; need to update for matrix gamma input.')
         return rkf45_numba(c0, time_points, n_species, n, D, beta, gamma,
                            f, f_args, L, dt0, tol=1e-7,
                            s_bounds=(0.1, 10.0), h_min=0.0)
@@ -398,25 +412,21 @@ def _check_for_negative_concs(u_step, c_step, c_hat_step, dt, dt_bounds,
     Check to see is any concentrations went negative.
     """
     if (u_step < 0.0).any():
-        if not quiet:
-            print('NEGATIVE CONC, ', dt)
         # If we can't reduce step size any more
         if dt[2] <= dt_bounds[0]:
-            c_step[np.nonzero(c_step[j] < 0.0)] = tiny_conc
+            c_step[np.nonzero(c_step < 0.0)] = tiny_conc
             c_hat_step = np.fft.fftn(c_step, axes=(1, 2))
             u_step = c_step.flatten()
             reject_step = False
             if not quiet:
-                print(' NEGATIVE CONC, ZEROED OUT, TAKING TINY STEP ')
+                print(' NEGATIVE CONC ZEROED OUT, TAKING TINY STEP ')
         else:  # Cut step size by 2
             dt = (dt[0], dt[1], min(dt[2] / 2.0, dt_bounds[0]))
             reject_step = True
-            if not quiet:
-                print(' REDUCING STEP SIZE ')
     else:
         reject_step = False
 
-    return u_step, c_step, c_hat_step, reject_step
+    return u_step, c_step, c_hat_step, reject_step, dt
 
 
 @numba.jit(nopython=True)
@@ -459,22 +469,30 @@ def cnab2_step(dt_current, dt0, c_hat, f_hat, f_hat0, D, beta, gamma, k2):
     # Shape
     n = c_hat.shape[1:]
 
-    # Nonlinear terms
-    c_hat_step = (1 + omega/2) * f_hat - omega/2 * f_hat0
+    # Empty array for step
+    c_hat_step = np.empty_like(c_hat)
 
-    # Linear terms
-    for i, dbg in enumerate(zip(D, beta, gamma)):
-        d, b, g = dbg
-        # Add constant term, correcting for DC values in Numpy's FFT
-        c_hat_step[i,0,0] += b * n[0] * n[1]
+    # Solve for each grid point
+    for i in range(n[0]):
+        for j in range(n[1]):
+            # Build right hand side for linear solve
+            A_rhs = np.diag(1/dt_current - k2[i,j] * D / 2) + gamma / 2
 
-        # Add other linear terms
-        c_hat_step[i,:,:] += (1/dt_current - k2*d/2 + g/2) * c_hat[i,:,:]
+            rhs = (1 + omega/2) * f_hat[:,i,j] - omega/2 * f_hat0[:,i,j] \
+                    + np.dot(A_rhs, c_hat[:,i,j])
 
-        # Solve for step
-        c_hat_step[i,:,:] /= (1/dt_current + k2*d/2 - g/2)
+            # Add constant term, correcting for DC values in Numpy's FFT
+            if i == 0 and j == 0:
+                rhs += beta * n[0] * n[1]
+
+            # Build matrix
+            A = np.diag(1/dt_current + k2[i,j] * D / 2) - gamma / 2
+
+            # Solve
+            c_hat_step[:,i,j] = np.linalg.solve(A, rhs)
 
     return c_hat_step
+
 
 def make_rhs(c, t, D, beta, gamma, hx, hy, f, f_args):
     """
@@ -584,6 +602,7 @@ def make_rkf45_numba(c0, time_points, n_species, n, D, beta, gamma, f, f_args,
         h = dt0
 
         while i < i_max:
+            print(i)
             while t < time_points[i]:
                 y_0, t, h = rkf45_step_numba(
                         y_0, t, D, beta, gamma, hx, hy, f_args, h, tol, s_min,
@@ -630,6 +649,7 @@ def rkf45_numba(c0, time_points, n_species, n, D, beta, gamma, f, f_args,
 
     return y_interp.reshape((n_species, *n, len(time_points)))
 
+
 def _check_and_update_inputs(c0, L, D, beta, gamma, f, f_args):
     """
     Check inputs and update parameters for convenient use.
@@ -642,9 +662,9 @@ def _check_and_update_inputs(c0, L, D, beta, gamma, f, f_args):
     n = _check_n_gridpoints(n)
 
     # Check D, beta, gamma for consistency
-    D = _check_beta_gamma_D(D, n_species, name='D')
-    beta = _check_beta_gamma_D(beta, n_species, name='beta')
-    gamma = _check_beta_gamma_D(gamma, n_species, name='gamma')
+    D = _check_beta_D(D, n_species, name='D')
+    beta = _check_beta_D(beta, n_species, name='beta')
+    gamma = _check_gamma(gamma, n_species)
 
     # Perform further checks and updates
     f_args = _check_f(f, f_args)
@@ -687,7 +707,7 @@ def _check_and_update_c0(c0):
     return c0, n_species, n
 
 
-def _check_beta_gamma_D(x, n_species, name='beta, gamma, D arrays'):
+def _check_beta_D(x, n_species, name='beta and D arrays'):
     if x is None:
         return np.zeros(n_species)
 
@@ -709,6 +729,22 @@ def _check_beta_gamma_D(x, n_species, name='beta, gamma, D arrays'):
     x = x.astype(float)
 
     return x.astype(float)
+
+
+def _check_gamma(x, n_species):
+    if x is None:
+        return np.zeros((n_species, n_species))
+
+    if np.isscalar(x):
+        x = np.array([[x]])
+
+    # Make sure it's a numpy array
+    x = np.array(x, dtype=np.float)
+
+    if x.shape != (n_species, n_species):
+        raise RuntimeError('gamma must be an n_species x n_species array.')
+
+    return x
 
 
 def _check_n_gridpoints(n):
