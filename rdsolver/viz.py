@@ -51,14 +51,14 @@ def display_notebook(time_points, c, plot_height=400):
     if c.shape[3] != len(time_points):
         raise RuntimeError('Number of time points must equal c.shape[3].')
 
-    # Set any negative concentrations to zero
-    if (c < 0).any():
-        warnings.warn('Negative concentrations detected: setting to zero.',
-                      RuntimeWarning)
-        c[c<0] = 0.0
-
-    # Determine maximal concentration in each channel
+    # Determine maximal and minimal concentrations in each channel
     c_max = c.max(axis=(1, 2, 3))
+    c_min = c.min(axis=(1, 2, 3))
+
+    # Add a dummy yellow channel if we have two species for convenience
+    if len(c_max) == 2:
+        c_max = np.concatenate((c_max, (0.0,)))
+        c_min = np.concatenate((c_min, (0.0,)))
 
     # Get shape of domain
     n, m = c.shape[1:3]
@@ -72,11 +72,11 @@ def display_notebook(time_points, c, plot_height=400):
     # If single channel, display with viridis
     if c.shape[0] == 1:
         color = bokeh.models.LinearColorMapper(bokeh.palettes.viridis(256),
-                                               low=0, high=c_max[0])
+                                               low=c_min[0], high=c_max[0])
         im_bokeh = p.image(image=[c[0,:,:,0]], x=0, y=0, dw=m, dh=n,
                            color_mapper=color)
     else:
-        im_disp = make_cmy_image(c[:,:,:,0], *c_max)
+        im_disp = make_cmy_image(c[:,:,:,0], *c_max, *c_min)
         im_bokeh = p.image_rgba(image=[im_disp], x=0, y=0, dw=m, dh=n)
 
     # Show the plot
@@ -88,7 +88,7 @@ def display_notebook(time_points, c, plot_height=400):
         if c.shape[0] == 1:
             im_bokeh.data_source.data['image'] = [c[0,:,:,ind]]
         else:
-            im_disp = make_cmy_image(c[:,:,:,ind], *c_max)
+            im_disp = make_cmy_image(c[:,:,:,ind], *c_max, *c_min)
             im_bokeh.data_source.data['image'] = [im_disp]
         bokeh.io.push_notebook()
 
@@ -132,8 +132,14 @@ def display_single_frame(c, i=-1, plot_height=400, notebook=True,
         The plot.
     """
 
-    if len(c.shape) == 3:
+    if len(c.shape) == 2:
+        c = c.reshape((1, *c.shape, 1))
+        if i not in [0, -1]:
+            raise RuntimeError('For single image, cannot specify i.')
+    elif len(c.shape) == 3:
         c = c.reshape((1, *c.shape))
+        if i not in [0, -1]:
+            raise RuntimeError('For single image, cannot specify i.')
     if len(c.shape) != 4:
         raise RuntimeError(
                 'c must be n_species x nx x ny x n_time_points array.')
@@ -151,7 +157,7 @@ def display_single_frame(c, i=-1, plot_height=400, notebook=True,
     # If single channel, display with viridis
     if c.shape[0] == 1:
         color = bokeh.models.LinearColorMapper(bokeh.palettes.viridis(256))
-        im_bokeh = p.image(image=[c[:,:,:,i]], x=0, y=0, dw=m, dh=n,
+        im_bokeh = p.image(image=[c[0,:,:,i]], x=0, y=0, dw=m, dh=n,
                            color_mapper=color)
     else:
         im_disp = make_cmy_image(c[:,:,:,i])
@@ -167,16 +173,19 @@ def display_single_frame(c, i=-1, plot_height=400, notebook=True,
     return p
 
 
-def make_cmy_image(c, im_cyan_max=None, im_mag_max=None, im_yell_max=None):
+def make_cmy_image(c, im_cyan_max=None, im_mag_max=None, im_yell_max=None,
+                   im_cyan_min=None, im_mag_min=None, im_yell_min=None):
     """
     Make an RGBA CMY image from a concentration field.
     """
+
     if c.shape[0] == 2:
         im = im_merge_cmy(c[0,:,:], c[1,:,:], None, im_cyan_max, im_mag_max,
-                          im_yell_max)
+                          im_yell_max, im_cyan_min, im_mag_min, im_yell_min)
     elif c.shape[0] == 3:
         im = im_merge_cmy(c[0,:,:], c[1,:,:], c[2,:,:], im_cyan_max,
-                          im_mag_max, im_yell_max)
+                          im_mag_max, im_yell_max, im_cyan_min, im_mag_min,
+                          im_yell_min)
     else:
         raise RuntimeError('Too many channels. Select up to three to display.')
 
@@ -184,7 +193,8 @@ def make_cmy_image(c, im_cyan_max=None, im_mag_max=None, im_yell_max=None):
 
 
 def im_merge_cmy(im_cyan, im_mag, im_yell=None, im_cyan_max=None,
-                 im_mag_max=None, im_yell_max=None):
+                 im_mag_max=None, im_yell_max=None, im_cyan_min=None,
+                 im_mag_min=None, im_yell_min=None):
     """
     Merge channels to make RGB image that has cyan, magenta, and
     yellow.
@@ -205,6 +215,12 @@ def im_merge_cmy(im_cyan, im_mag, im_yell=None, im_cyan_max=None,
         Maximum value to use when scaling the magenta channel
     im_yell_max : float, default max of inputed yellow channel
         Maximum value to use when scaling the yellow channel
+    im_cyan_min : float, default min of inputed cyan channel
+        Maximum value to use when scaling the cyan channel
+    im_mag_min : float, default min of inputed magenta channel
+        Minimum value to use when scaling the magenta channel
+    im_yell_min : float, default min of inputed yellow channel
+        Minimum value to use when scaling the yellow channel
 
     Returns
     -------
@@ -212,32 +228,40 @@ def im_merge_cmy(im_cyan, im_mag, im_yell=None, im_cyan_max=None,
         RGB image the give CMY coloring of image
     """
 
+
     # Compute max intensities if needed
     if im_cyan_max is None:
         im_cyan_max = im_cyan.max()
     if im_mag_max is None:
         im_mag_max = im_mag.max()
-    if im_yell_max is None and im_yell is not None:
+    if im_yell is not None and im_yell_max is None:
         im_yell_max = im_yell.max()
-    else:
-        im_yell_max = 0
+
+    # Compute min intensities if needed
+    if im_cyan_min is None:
+        im_cyan_min = im_cyan.min()
+    if im_mag_min is None:
+        im_mag_min = im_mag.min()
+    if im_yell is not None and im_yell_min is None:
+        im_yell_min = im_yell.min()
 
     # Make sure maxes are ok
     if im_cyan_max < im_cyan.max() or im_mag_max < im_mag.max() \
             or (im_yell is not None and im_yell_max < im_yell.max()):
-        raise RuntimeError('Inputted max of channel > max of inputted channel.')
+        raise RuntimeError('Inputted max of channel < max of inputted channel.')
 
-    if (im_cyan < 0).any() or (im_mag < 0).any() \
-            or (im_yell is not None and (im_yell < 0).any()):
-        raise RuntimeError('Negative pixel values encountered.')
+    # Make sure mins are ok
+    if im_cyan_min > im_cyan.min() or im_mag_min > im_mag.min() \
+            or (im_yell is not None and im_yell_min > im_yell.min()):
+        raise RuntimeError('Inputted min of channel > min of inputted channel.')
 
     # Scale the images
-    im_c = im_cyan / im_cyan_max
-    im_m = im_mag / im_mag_max
+    im_c = (im_cyan - im_cyan_min) / (im_cyan_max - im_cyan_min)
+    im_m = (im_mag - im_mag_min) / (im_mag_max - im_mag_min)
     if im_yell is None:
         im_y = np.zeros_like(im_cyan)
     else:
-        im_y = im_yell / im_yell_max
+        im_y = (im_yell - im_yell_min) / (im_yell_max - im_yell_min)
 
     # Convert images to RGB with magenta, cyan, and yell channels
     im_rgb = np.empty((*im_c.shape, 3))
