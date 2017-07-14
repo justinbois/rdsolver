@@ -1,5 +1,9 @@
 .cache/
 .eggs/
+.ipynb_checkpoints/
 build/
 dist/
 rdsolver.egg-info
+*.npy
+*.csv
+*.html

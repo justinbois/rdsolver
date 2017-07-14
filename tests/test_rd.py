@@ -585,3 +585,20 @@ def test_cnab2_step():
                                D, beta, gamma, k2)
     check_cnab2_expressions(c_hat_step, dt_current, dt0, c_hat, f_hat, D, beta,
                                 gamma, k2)
+
+    dt_current = 1
+    dt0 = 1.3
+    n = (64, 128)
+    c = (nonuniform_c(2, n, 1), nonuniform_c(2, n, 1))
+    c_hat = np.fft.fftn(c[1], axes=(1, 2))
+    f = lambda x, t: x
+    f_hat = tuple([np.fft.fftn(f(c_val, 0), axes=(1, 2)) for c_val in c])
+    D = np.array([1.0, 0.2])
+    beta = np.array([0.6, 10.0])
+    gamma = np.array([[-1.0, 0.5], [-0.5, 1.3]]).astype(dtype=np.complex128)
+    kx, ky = rd.utils.wave_numbers_2d(n)
+    k2 = (kx**2 + ky**2)
+    c_hat_step = rd.cnab2_step(dt_current, dt0, c_hat, f_hat[1], f_hat[0],
+                               D, beta, gamma, k2)
+    check_cnab2_expressions(c_hat_step, dt_current, dt0, c_hat, f_hat, D, beta,
+                                gamma, k2)

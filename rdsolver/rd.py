@@ -20,7 +20,8 @@ from . import utils
 
 
 def initial_condition(uniform_conc=None, n=None, L=None, n_bumps=20,
-                      bump_width_range=(0.025, 0.1), max_amplitude=0.005):
+                      bump_width_range=(0.025, 0.1), max_amplitude=0.005,
+                      fixed_amplitude=None, species=None):
     """
     Generate initial condition as a small perturbation from uniform c0.
 
@@ -41,7 +42,13 @@ def initial_condition(uniform_conc=None, n=None, L=None, n_bumps=20,
         domain.
     max_amplitude : float, default 0.005
         Maximum amplitude of the perturbation. This is in absolute units
-        to allow perturbations from zero.
+        to allow perturbations from zero. Ignored if fixed_amplitude is
+        not None.
+    fixed_amplitude : float, default None
+        If not None, each perturbation has the same, fixed amplitude.
+    species : array_like, default None
+        Array of chemical species that are perturbed. If None, all
+        chemical speceies are perturbed.
 
     Returns
     -------
@@ -68,6 +75,11 @@ def initial_condition(uniform_conc=None, n=None, L=None, n_bumps=20,
     uniform_conc = np.array(uniform_conc)
     n_species = len(uniform_conc)
 
+    if species is None:
+        species = range(n_species)
+    elif np.isscalar(species):
+        species = [species]
+
     # Get grid points
     _, _, _, _, x_grid, y_grid = utils.grid_points_2d(n, L=L)
 
@@ -80,13 +92,17 @@ def initial_condition(uniform_conc=None, n=None, L=None, n_bumps=20,
 
     # Make bumps
     c0 = np.stack([u * np.ones(n) for u in uniform_conc])
-    for i in range(n_species):
+    for i in species:
         for j in range(n_bumps):
             x_pos = np.random.rand() * L[0]
             y_pos = np.random.rand() * L[1]
             width = max(L[0], L[1]) * (bump_width_range[0] \
               + (bump_width_range[1] - bump_width_range[0]) * np.random.rand())
-            c0[i,:,:] += mult_factor * max_amplitude * np.random.rand() \
+            if fixed_amplitude is None:
+                amp = max_amplitude * np.random.rand()
+            else:
+                amp = fixed_amplitude
+            c0[i,:,:] += mult_factor * amp \
                 * np.exp(-(x_grid - x_pos)**2 / 2.0 / width**2) \
                 * np.exp(-(y_grid - y_pos)**2 / 2.0 / width**2)
 
@@ -337,7 +353,6 @@ def solve(c0, time_points, D=None, beta=None, gamma=None,
 
     # Solve
     if solver == rkf45_numba:
-        raise RuntimeError('rkf45 currently not functioning; need to update for matrix gamma input.')
         return rkf45_numba(c0, time_points, n_species, n, D, beta, gamma,
                            f, f_args, L, dt0, tol=1e-7,
                            s_bounds=(0.1, 10.0), h_min=0.0)
@@ -503,11 +518,13 @@ def make_rhs(c, t, D, beta, gamma, hx, hy, f, f_args):
         result = np.empty_like(c)
 
         # Linear terms of right-hand side
-        for i, dbg in enumerate(zip(D, beta, gamma)):
-            d, b, g = dbg
+        for i, db in enumerate(zip(D, beta)):
+            d, b = db
             c_view = c[i,:,:]
-            result[i,:,:] = d * utils.laplacian_fd(c_view, hx, hy) \
-                                    + b + g * c_view
+            result[i,:,:] = d * utils.laplacian_fd(c_view, hx, hy) + b
+
+        # Other linear terms
+        result += _multiply_gamma(gamma, c)
 
         # Nonlinear terms
         if f is not None:
@@ -602,7 +619,6 @@ def make_rkf45_numba(c0, time_points, n_species, n, D, beta, gamma, f, f_args,
         h = dt0
 
         while i < i_max:
-            print(i)
             while t < time_points[i]:
                 y_0, t, h = rkf45_step_numba(
                         y_0, t, D, beta, gamma, hx, hy, f_args, h, tol, s_min,
