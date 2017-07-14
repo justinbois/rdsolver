@@ -17,9 +17,30 @@ def asdm(D_a=0.005, D_s=0.2, rho_a=0.01, rho_s=0.02, sigma_a=0.0, sigma_s=0.02,
     rho_a : float
         Production rate of activator at saturation.
     rho_s : float
-        Production rate of activator at saturation.
-    Parameters are given as kwargs and relate to equation 3 of Koch and
-    Meinhardt, Rev. Mod. Phys., 1994.
+        Delpletion rate of inhibitor at saturation.
+    sigma_a : float
+        Basal production rate of activator.
+    sigma_s : float
+        Basal production rate of substrate.
+    mu_a : float
+        Autodegration constant of activator.
+    kappa_a : float
+        Saturation constant for activator.
+
+    Returns
+    -------
+    D : ndarray, shape (2,)
+        Diffusion coefficients
+    beta : ndarray, shape (2,)
+        Basal production rates
+    gamma : ndarray shape (2, 2)
+        Linear coefficients for reactions
+    f : Numba'd function
+        Function for nonlinear reaction dynamics.
+    f_args : 1-tuple
+        Arguments for f
+    home_ss : ndarray, shape (2,)
+        Homogeneous steady states of activator and substrate.
 
     Notes
     -----
