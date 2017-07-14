@@ -8,6 +8,19 @@ def asdm(D_a=0.005, D_s=0.2, rho_a=0.01, rho_s=0.02, sigma_a=0.0, sigma_s=0.02,
     Set up parameters for the activator-substrate depletion model
     (ASDM).
 
+    Parameters
+    ----------
+    D_a : float
+        Diffusion coefficient of activator.
+    D_s : float
+        Diffusion coefficient of substrate.
+    rho_a : float
+        Production rate of activator at saturation.
+    rho_s : float
+        Production rate of activator at saturation.
+    Parameters are given as kwargs and relate to equation 3 of Koch and
+    Meinhardt, Rev. Mod. Phys., 1994.
+
     Notes
     -----
     .. This is the ASDM model as given by equation 3 of Kohn and
@@ -15,7 +28,7 @@ def asdm(D_a=0.005, D_s=0.2, rho_a=0.01, rho_s=0.02, sigma_a=0.0, sigma_s=0.02,
     """
     D = np.array([D_a, D_s])
     beta = np.array([sigma_a, sigma_s])
-    gamma = np.array([-mu_a, 0.0])
+    gamma = np.diag([-mu_a, 0.0])
 
     @numba.jit(nopython=True)
     def f(c, t, rho_a, rho_s, kappa_a):
@@ -33,6 +46,65 @@ def asdm(D_a=0.005, D_s=0.2, rho_a=0.01, rho_s=0.02, sigma_a=0.0, sigma_s=0.02,
     s_ss = sigma_s / rho_s * (1 + kappa_a * a_ss**2) / a_ss**2
 
     return D, beta, gamma, f, f_args, np.array([a_ss, s_ss])
+
+
+def asdm_switch(D_a=0.015, D_s=0.03, D_y=0, rho_a=0.025, rho_s=0.0025,
+                rho_y=0.03, sigma_a=0.0, sigma_s=0.00225, sigma_y=0.00015,
+                mu_a=0.025, mu_s=0.00075, mu_y=0.003, kappa_a=0.1, kappa_s=20.0,
+                kappa_y=22.0):
+    """
+    Set up parameters for the activator-substrate depletion model
+    (ASDM) with a switch.
+
+    Notes
+    -----
+    .. This is the ASDM model as given by equation 8 of Kohn and
+       Meinhardt, Rev. Mod. Phys., 1994.
+    """
+    D = np.array([D_a, D_s, D_y])
+
+    gamma = np.array([[-mu_a, 0, 0],
+                      [0, -mu_s, 0],
+                      [sigma_y, 0, -mu_y]], dtype=np.float)
+
+    if kappa_s == 0:
+        beta = np.array([sigma_a, sigma_s, 0.0], dtype=np.float)
+
+        @numba.jit(nopython=True)
+        def f(c, t, rho_a, rho_s, rho_y, sigma_s, sigma_y, kappa_a, kappa_y):
+            a = c[0,:,:]
+            s = c[1,:,:]
+            y = c[2,:,:]
+            a2 = a**2
+            y2 = y**2
+            a2s = a2 * s
+            fa = rho_a * a2s / (1 + kappa_a * a2)
+            fs = -rho_s * a2s / (1 + kappa_a * a2)
+            fy = rho_y * y2 / (1 + kappa_y * y2)
+            return np.stack((fa, fs, fy))
+
+        f_args = (rho_a, rho_s, rho_y, sigma_s, sigma_y, kappa_a, kappa_y)
+    else:
+        beta = np.array([sigma_a, 0, 0])
+
+        @numba.jit(nopython=True)
+        def f(c, t, rho_a, rho_s, rho_y, sigma_s, sigma_y,
+              kappa_a, kappa_s, kappa_y):
+            a = c[0,:,:]
+            s = c[1,:,:]
+            y = c[2,:,:]
+            a2 = a**2
+            y2 = y**2
+            a2s = a2 * s
+            fa = rho_a * a2s / (1 + kappa_a * a2)
+            fs = sigma_s / (1 + kappa_s * y) - rho_s * a2s / (1 + kappa_a * a2)
+            fy = rho_y * y2 / (1 + kappa_y * y2)
+            return np.stack((fa, fs, fy))
+
+        f_args = (rho_a, rho_s, rho_y, sigma_s, sigma_y,
+                  kappa_a, kappa_s, kappa_y)
+
+    return D, beta, gamma, f, f_args, None
 
 
 def min_system(D_D=60.0, D_E=60.0, D_d=1.2, D_de=0.4, omega_D=2.9e-4,
@@ -55,15 +127,13 @@ def min_system(D_D=60.0, D_E=60.0, D_d=1.2, D_de=0.4, omega_D=2.9e-4,
         c_d = c[2,:,:]
         c_de = c[3,:,:]
 
-        f1 = omega_de * c_de
         f2 = omega_dD * c_d * c_D
         f3 = omega_E * c_d * c_E
         f4 = omega_eE * c_d * c_E * c_de**2
-        f5 = omega_D * c_D
 
-        f_D = f1 - f2
-        f_E = f1 - f3 - f4
-        f_d = f5 + f2 - f3 - f4
+        f_D = -f2
+        f_E = -f3 - f4
+        f_d = f2 - f3 - f4
         f_de = f3 + f4
 
         return np.stack((f_D, f_E, f_d, f_de))
@@ -71,27 +141,9 @@ def min_system(D_D=60.0, D_E=60.0, D_d=1.2, D_de=0.4, omega_D=2.9e-4,
     f_args = (omega_D, omega_E, omega_dD, omega_eE, omega_de)
 
     beta = np.zeros(4, dtype=np.float)
-    gamma = np.array([-omega_D, 0.0, 0.0, -omega_de])
+    gamma = np.array([[-omega_D, 0, 0, omega_de],
+                      [0, 0, 0, omega_de],
+                      [omega_D, 0, 0, 0],
+                      [0, 0, 0, -omega_de]], dtype=np.float)
 
-    # Find homogeneous steady state
-    def cd_from_cde(cde, ce0, omega_E, omega_eE, omega_de):
-        if cde == ce0:
-            return 0.0
-        else:
-            return omega_de * cde / (ce0 - cde)*(omega_E + omega_eE * cde**2)
-
-    def cde_root(cde, cd0, ce0, omega_D, omega_E, omega_dD, omega_eE, omega_de):
-        cd = cd_from_cde(cde, ce0, omega_E, omega_eE, omega_de)
-        cD = cd0 - cd - cde
-        return omega_de * cde - omega_dD * cd * cD - omega_D * cD
-
-    try:
-        cde_ss = scipy.optimize.brentq(cde_root, 0, 0.3,
-                args=(cd0, ce0, omega_D, omega_E, omega_dD, omega_eE, omega_de))
-        cE_ss = ce0 - cde_ss
-        cd_ss = cd_from_cde(cde_ss, ce0, omega_E, omega_eE, omega_de)
-        cD_ss = cd0 - cde_ss - cd_ss
-
-        return D, beta, gamma, f, f_args, np.array([cD_ss, cE_ss, cd_ss, cde_ss])
-    except:
-        return D, beta, gamma, f, f_args, None
+    return D, beta, gamma, f, f_args, None
