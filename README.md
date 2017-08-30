@@ -3,7 +3,7 @@
 [![Build Status](https://travis-ci.org/justinbois/rdsolver.svg?branch=master)](https://travis-ci.org/justinbois/rdsolver)
 
 ## Status
-**Not ready for use. Unit tests are passing, but coverage is not complete nor are integration tests.**
+**Pre-alpha. Unit tests are passing, but coverage is not complete nor are integration tests.**
 
 ## Purpose
 This package solves a simple problem: reaction diffusion dynamics in two dimensions. Specifically, it solves the system of PDEs
@@ -14,12 +14,10 @@ Here, each chemical species is indicated by the subscript *i* and the physical p
 
 ## Installation
 
-To install, close this repository and then run `setup.py`.
+To install, you can use pip.
 
 ```
-git clone https://github.com/justinbois/rdsolver.git
-cd rdsolver
-python setup.py install
+pip install rdsolver
 ```
 
 
