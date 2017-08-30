@@ -20,6 +20,24 @@ To install, you can use pip.
 pip install rdsolver
 ```
 
+For some of the interactive visualizations to work properly in Jupyter notebooks, you may need to use version 2.0.0 of `widgetsnbextension` because of [this issue](https://github.com/jupyter-widgets/ipywidgets/issues/1678). To install this using the `conda` package manager, you will need to do:
+
+```
+conda install widgetsnbextension=2.0.0
+```
+
+You may also need to run this at the command line after installation:
+
+```
+jupyter nbextension enable --py --sys-prefix widgetsnbextension
+```
+
+Finally, your browser may have problems rending the graphics, so you should launch your Jupyter notebook like this:
+
+```
+jupyter notebook --NotebookApp.iopub_data_rate_limit=10000000
+```
+
 
 ## Method
 To solve the PDEs, I use spectral differentiation with variable time step implicit/explicit (VSIMEX) time stepping using a Crank-Nicholson/Adams-Bashforth method. The cons of this approach appear below, and the pros are best understood by considering why these methods are chosen.
