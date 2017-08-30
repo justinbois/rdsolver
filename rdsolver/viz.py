@@ -67,7 +67,7 @@ def display_notebook(time_points, c, plot_height=400):
     plot_width = int(m/n * plot_height)
     p = bokeh.plotting.figure(plot_height=plot_height, plot_width=plot_width,
                               x_range=[0, m], y_range=[0, n],
-                              tools='pan,box_zoom,wheel_zoom,save,reset,resize')
+                              tools='pan,box_zoom,wheel_zoom,save,reset')
 
     # If single channel, display with viridis
     if c.shape[0] == 1:
@@ -152,7 +152,7 @@ def display_single_frame(c, i=-1, plot_height=400, notebook=True,
     plot_width = int(m/n * plot_height)
     p = bokeh.plotting.figure(plot_height=plot_height, plot_width=plot_width,
                               x_range=[0, m], y_range=[0, n],
-                              tools='pan,box_zoom,wheel_zoom,save,reset,resize')
+                              tools='pan,box_zoom,wheel_zoom,save,reset')
 
     # If single channel, display with viridis
     if c.shape[0] == 1:
