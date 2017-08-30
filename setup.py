@@ -10,7 +10,12 @@ with open('README.md') as readme_file:
 
 requirements = [
     'numpy',
-    'scipy'
+    'scipy',
+    'scikit-image',
+    'numba',
+    'bokeh',
+    'ipywidgets',
+    'tqdm'
 ]
 
 setup_requirements = [
@@ -25,7 +30,7 @@ test_requirements = [
 
 setup(
     name='rdsolver',
-    version='0.1.0',
+    version='0.1.1',
     description="Solver for 2D reaction-diffusion systems.",
     long_description=readme,
     author="Justin Bois",
