@@ -10,6 +10,8 @@ import bokeh.io
 import bokeh.layouts
 import bokeh.models
 import bokeh.plotting
+import bokeh.application
+import bokeh.application.handlers
 
 import ipywidgets
 
@@ -33,11 +35,9 @@ def display_notebook(time_points, c, plot_height=400):
 
     Notes
     -----
-    .. *ONLY* works in Jupyter notebooks.
-
-    .. Your browswer might have problems displaying the data.
-       If this is the case, you might want to try launching Jupyter
-       as jupyter notebook --browser=safari --NotebookApp.iopub_data_rate_limit=10000000
+    .. To display in a notebook hosted, e.g., at `localhost:8888`, do
+       `bokeh.io.show(display_notebook(time_points, c),
+                      notebook_url='localhost:8888')`
     """
 
     # If a single image, convert
@@ -65,41 +65,53 @@ def display_notebook(time_points, c, plot_height=400):
 
     # Set up figure with appropriate dimensions
     plot_width = int(m/n * plot_height)
-    p = bokeh.plotting.figure(plot_height=plot_height, plot_width=plot_width,
-                              x_range=[0, m], y_range=[0, n],
-                              tools='pan,box_zoom,wheel_zoom,save,reset')
 
-    # If single channel, display with viridis
-    if c.shape[0] == 1:
-        color = bokeh.models.LinearColorMapper(bokeh.palettes.viridis(256),
-                                               low=c_min[0], high=c_max[0])
-        im_bokeh = p.image(image=[c[0,:,:,0]], x=0, y=0, dw=m, dh=n,
-                           color_mapper=color)
-    else:
-        im_disp = make_cmy_image(c[:,:,:,0], *c_max, *c_min)
-        im_bokeh = p.image_rgba(image=[im_disp], x=0, y=0, dw=m, dh=n)
+    def _plot_app(doc):
+        p = bokeh.plotting.figure(plot_height=plot_height,
+                                  plot_width=plot_width,
+                                  x_range=[0, m], 
+                                  y_range=[0, n])
 
-    # Show the plot
-    bokeh.io.show(p, notebook_handle=True)
-
-    def update(time=0.0):
-        ind = np.searchsorted(time_points, time)
-
+        # Add the image to the plot
         if c.shape[0] == 1:
-            im_bokeh.data_source.data['image'] = [c[0,:,:,ind]]
+            color = bokeh.models.LinearColorMapper(
+                    bokeh.palettes.viridis(256), low=c_min[0], high=c_max[0])
+            source = bokeh.models.ColumnDataSource(
+                                        data={'image': [c[0,:,:,0]]})
+            p.image(image='image', x=0, y=0, dw=m, dh=n, source=source,
+                    color_mapper=color)
         else:
-            im_disp = make_cmy_image(c[:,:,:,ind], *c_max, *c_min)
-            im_bokeh.data_source.data['image'] = [im_disp]
-        bokeh.io.push_notebook()
+            im_disp = make_cmy_image(c[:,:,:,0], *c_max, *c_min)
+            source = bokeh.models.ColumnDataSource(data={'image': [im_disp]})
+            p.image_rgba(image='image', x=0, y=0, dw=m, dh=n, source=source)
 
-    ipywidgets.interact(update,
-        time=ipywidgets.FloatSlider(min=time_points[0], max=time_points[-1],
-                                    value=time_points[0]))
+        def _callback(attr, old, new):
+            i = np.searchsorted(time_points, slider.value) 
+            print(i)
+
+            if c.shape[0] == 1:
+                im_disp = c[0,:,:,i]
+            else:
+                im_disp = make_cmy_image(c[:,:,:,i], *c_max, *c_min)
+
+            source.data = {'image': [im_disp]}
+
+        slider = bokeh.models.Slider(
+            start=time_points[0],
+            end=time_points[-1],
+            value=time_points[0],
+            step=1 / len(time_points) * (time_points[1] - time_points[0]),
+            title='time')
+        slider.on_change('value', _callback)
+
+        # Add the plot to the app
+        doc.add_root(bokeh.layouts.column(p, slider))
+
+    handler = bokeh.application.handlers.FunctionHandler(_plot_app)
+    return bokeh.application.Application(handler)
 
 
-def display_single_frame(c, i=-1, plot_height=400, notebook=True,
-                         output_file='rd_result.html', title='RD result',
-                         browser=None):
+def display_single_frame(c, i=-1, plot_height=400):
     """
     Display the concentration field of a single time point.
 
@@ -117,14 +129,6 @@ def display_single_frame(c, i=-1, plot_height=400, notebook=True,
         Height of plot, in pixels.
     notebook : bool, default True
         If True, display in notebook. Otherwise, create and display
-        as HTML in a new tab in the browser.
-    output_file : str, default 'rd_result.html'
-        Name of output file for HTML. Ignored if `notebook` is True.
-    title : str, default 'RD result'
-        Title of HTML page. Ignored is `notebook` is True.
-    browser : str, default None
-        Name of browser to use to display HTML. Ignored if `notebook`
-        is True.
 
     Returns
     -------
@@ -157,18 +161,10 @@ def display_single_frame(c, i=-1, plot_height=400, notebook=True,
     # If single channel, display with viridis
     if c.shape[0] == 1:
         color = bokeh.models.LinearColorMapper(bokeh.palettes.viridis(256))
-        im_bokeh = p.image(image=[c[0,:,:,i]], x=0, y=0, dw=m, dh=n,
+        p.image(image=[c[0,:,:,i]], x=0, y=0, dw=m, dh=n,
                            color_mapper=color)
     else:
-        im_disp = make_cmy_image(c[:,:,:,i])
-        im_bokeh = p.image_rgba(image=[im_disp], x=0, y=0, dw=m, dh=n)
-
-    if notebook:
-        bokeh.io.output_notebook()
-        bokeh.io.show(p)
-    else:
-        bokeh.io.output_file(output_file, title=title)
-        bokeh.io.show(p, browser=browser)
+        p.image_rgba(image=[make_cmy_image(c[:,:,:,i])], x=0, y=0, dw=m, dh=n)
 
     return p
 
@@ -187,7 +183,8 @@ def make_cmy_image(c, im_cyan_max=None, im_mag_max=None, im_yell_max=None,
                           im_mag_max, im_yell_max, im_cyan_min, im_mag_min,
                           im_yell_min)
     else:
-        raise RuntimeError('Too many channels. Select up to three to display.')
+        raise RuntimeError(
+                        'Too many channels. Select up to three to display.')
 
     return rgb_to_rgba32(im)
 
@@ -263,11 +260,13 @@ def im_merge_cmy(im_cyan, im_mag, im_yell=None, im_cyan_max=None,
     else:
         im_y = (im_yell - im_yell_min) / (im_yell_max - im_yell_min)
 
-    # Convert images to RGB with magenta, cyan, and yell channels
-    im_rgb = np.empty((*im_c.shape, 3))
-    im_rgb[:,:,0] = 1 - im_c
-    im_rgb[:,:,1] = 1 - im_m
-    im_rgb[:,:,2] = 1 - im_y
+    # Convert images to RGB with magenta, cyan, and yellow channels
+    im_c = np.stack((np.zeros_like(im_c), im_c, im_c), axis=2)
+    im_m = np.stack((im_m, np.zeros_like(im_m), im_m), axis=2)
+    im_y = np.stack((im_y, im_y, np.zeros_like(im_y)), axis=2)
+    im_rgb = im_c + im_m + im_y
+    for i in [0, 1, 2]:
+        im_rgb[:,:,i] /= im_rgb[:,:,i].max()
 
     return im_rgb
 
@@ -287,7 +286,7 @@ def rgb_to_rgba32(im):
         Image decoded as a 32 bit RBGA image.
     """
     # Ensure it has three channels
-    if len(im.shape) != 3 or im.shape[2] !=3:
+    if im.ndim != 3 or im.shape[2] !=3:
         raise RuntimeError('Input image is not RGB.')
 
     # Make sure all entries between zero and one
@@ -303,11 +302,12 @@ def rgb_to_rgba32(im):
         im_8 = skimage.img_as_ubyte(im)
 
     # Add the alpha channel, which is expected by Bokeh
-    im_rgba = np.stack((*np.swapaxes(im_8, 0, 2),
-                       255*np.ones((n, m), dtype=np.uint8)), axis=2)
+    im_rgba = np.stack((*np.rollaxis(im_8, 2),
+                        255*np.ones((n, m), dtype=np.uint8)), axis=2)
 
     # Reshape into 32 bit. Must flip up/down for proper orientation
     return np.flipud(im_rgba.view(dtype=np.int32).reshape((n, m)))
+
 
 
 def interpolate_2d(a, n_interp_points=(200, 200)):
