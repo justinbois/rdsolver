@@ -3,5 +3,4 @@ scipy
 scikit-image
 numba
 bokeh
-ipywidgets
 tqdm
