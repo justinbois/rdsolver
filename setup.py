@@ -30,7 +30,7 @@ test_requirements = [
 
 setup(
     name='rdsolver',
-    version='0.1.1',
+    version='0.1.2',
     description="Solver for 2D reaction-diffusion systems.",
     long_description=readme,
     author="Justin Bois",
@@ -49,6 +49,7 @@ setup(
         'Natural Language :: English',
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.7',
     ],
     test_suite='tests',
     tests_require=test_requirements,
