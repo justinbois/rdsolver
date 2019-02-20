@@ -87,7 +87,6 @@ def display_notebook(time_points, c, plot_height=400):
 
         def _callback(attr, old, new):
             i = np.searchsorted(time_points, slider.value) 
-            print(i)
 
             if c.shape[0] == 1:
                 im_disp = c[0,:,:,i]
