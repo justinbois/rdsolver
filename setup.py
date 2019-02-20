@@ -30,7 +30,7 @@ test_requirements = [
 
 setup(
     name='rdsolver',
-    version='0.1.2',
+    version='0.1.3',
     description="Solver for 2D reaction-diffusion systems.",
     long_description=readme,
     author="Justin Bois",
