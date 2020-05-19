@@ -2,6 +2,7 @@ import numba
 import numpy as np
 import scipy.interpolate
 
+
 def grid_points_1d(n, L=None, x_start=0.0):
     """
     Returns the grid points for differencing on a periodic grid in 1D.
@@ -28,7 +29,7 @@ def grid_points_1d(n, L=None, x_start=0.0):
     if L is None:
         L = 2 * np.pi
 
-    return L * np.arange(1, n+1) / n + x_start
+    return L * np.arange(1, n + 1) / n + x_start
 
 
 # ###############
@@ -76,19 +77,20 @@ def grid_points_2d(n, L=None, x_start=(0.0, 0.0)):
     """
 
     if L is None:
-        L = (2*np.pi, 2*np.pi)
+        L = (2 * np.pi, 2 * np.pi)
 
     x = grid_points_1d(n[0], L[0], x_start[0])
     y = grid_points_1d(n[1], L[1], x_start[1])
 
     # Make grid
-    x_grid, y_grid = np.meshgrid(x, y, indexing='ij')
+    x_grid, y_grid = np.meshgrid(x, y, indexing="ij")
 
     # Flatten
     xx = x_grid.flatten()
     yy = y_grid.flatten()
 
     return x, y, xx, yy, x_grid, y_grid
+
 
 def wave_numbers_1d(n, L=None):
     """
@@ -139,12 +141,12 @@ def wave_numbers_2d(n, L=None):
     """
 
     if L is None:
-        L = (2*np.pi, 2*np.pi)
+        L = (2 * np.pi, 2 * np.pi)
 
     kx = wave_numbers_1d(n[0], L=L[0])
     ky = wave_numbers_1d(n[1], L=L[1])
 
-    return np.meshgrid(kx, ky, indexing='ij')
+    return np.meshgrid(kx, ky, indexing="ij")
 
 
 def diff_multiplier_periodic_1d(n, order=1):
@@ -167,18 +169,20 @@ def diff_multiplier_periodic_1d(n, order=1):
 
     # Right now, we can only have an even number of grid points.
     if n % 2 != 0:
-        raise RuntimeError('Must have even number of grid points.')
+        raise RuntimeError("Must have even number of grid points.")
 
     # Make the ik mask (set wave number N/2 = 0 for order odd order)
     if order % 2 == 0:
         wave_numbers = np.concatenate(
-            (np.arange(n//2 + 1), np.arange(-n//2 + 1, 0)))
+            (np.arange(n // 2 + 1), np.arange(-n // 2 + 1, 0))
+        )
     else:
         wave_numbers = np.concatenate(
-            (np.arange(n//2), (0,), np.arange(-n//2 + 1, 0)))
+            (np.arange(n // 2), (0,), np.arange(-n // 2 + 1, 0))
+        )
 
     # Compute the multiplier to compute the derivative
-    return (1j * wave_numbers)**order
+    return (1j * wave_numbers) ** order
 
 
 def diff_multiplier_periodic_2d(n, order=1):
@@ -209,16 +213,15 @@ def diff_multiplier_periodic_2d(n, order=1):
     mult_y = diff_multiplier_periodic_1d(n[1], order=order)
 
     # Reshape for 2D differentiation
-    mult_xx = np.reshape(np.tile(mult_x, n[1]), n, order='C')
-    mult_yy = np.reshape(np.tile(mult_y, n[0]), n, order='F')
+    mult_xx = np.reshape(np.tile(mult_x, n[1]), n, order="C")
+    mult_yy = np.reshape(np.tile(mult_y, n[0]), n, order="F")
 
-    mult_yy, mult_xx = np.meshgrid(mult_x, mult_y, indexing='ij')
+    mult_yy, mult_xx = np.meshgrid(mult_x, mult_y, indexing="ij")
 
     return mult_xx, mult_yy
 
 
-def diff_periodic_fft_2d(f, order=1, L=None, real_data=True,
-                         diff_multiplier=None):
+def diff_periodic_fft_2d(f, order=1, L=None, real_data=True, diff_multiplier=None):
     """
     Computes the spectral derivative of the 2-D function defined at
     periodic grid points.
@@ -253,14 +256,21 @@ def diff_periodic_fft_2d(f, order=1, L=None, real_data=True,
 
     fft_f = np.fft.fft2(f)
     if real_data:
-        Dmf = (np.fft.ifft2(diff_multiplier[1] * fft_f).real,
-               np.fft.ifft2(diff_multiplier[0] * fft_f).real)
+        Dmf = (
+            np.fft.ifft2(diff_multiplier[1] * fft_f).real,
+            np.fft.ifft2(diff_multiplier[0] * fft_f).real,
+        )
     else:
-        Dmf = (np.fft.ifft2(diff_multiplier[1] * fft_f),
-               np.fft.ifft2(diff_multiplier[0] * fft_f))
+        Dmf = (
+            np.fft.ifft2(diff_multiplier[1] * fft_f),
+            np.fft.ifft2(diff_multiplier[0] * fft_f),
+        )
 
     if L is not None:
-        return Dmf[0] * (2*np.pi/L[0])**order, Dmf[1] * (2*np.pi/L[1])**order
+        return (
+            Dmf[0] * (2 * np.pi / L[0]) ** order,
+            Dmf[1] * (2 * np.pi / L[1]) ** order,
+        )
 
     return Dmf
 
@@ -289,8 +299,9 @@ def laplacian_flat_periodic_2d(f, n, L=None, diff_multiplier=None):
     output : nd_array, shape(n[0]*n[1], )
         Flattened Laplacian of the concentration.
     """
-    dfdx, dfdy = diff_periodic_fft_2d(f.reshape(n), order=2,
-                                      L=L, diff_multiplier=diff_multiplier)
+    dfdx, dfdy = diff_periodic_fft_2d(
+        f.reshape(n), order=2, L=L, diff_multiplier=diff_multiplier
+    )
     return (dfdx + dfdy).flatten()
 
 
@@ -304,6 +315,7 @@ def flat_to_3d(c_flat, n_species, n):
         Flattened array of concentrations
     n_species :
     """
+
 
 def rkf45_step(f, y, t, args, h, tol, s_bounds, h_min):
     """
@@ -349,22 +361,27 @@ def rkf45_step(f, y, t, args, h, tol, s_bounds, h_min):
     y_4 = y + (1932.0 * k_1 - 7200.0 * k_2 + 7296.0 * k_3) / 2197.0
     k_4 = h * f(y_4, t + 12.0 * h / 13.0, *args)
 
-    y_5 = y + (8341.0 * k_1 - 32832.0 * k_2 + 29440.0 * k_3 - 845.0 * k_4)\
-        / 4104.0
+    y_5 = y + (8341.0 * k_1 - 32832.0 * k_2 + 29440.0 * k_3 - 845.0 * k_4) / 4104.0
     k_5 = h * f(y_5, t + h, *args)
 
-    y_6 = y + (-6080.0 * k_1 + 41040.0 * k_2 - 28352.0 * k_3 + 9295.0 * k_4
-               - 5643.0 * k_5) / 20520.0
+    y_6 = (
+        y
+        + (-6080.0 * k_1 + 41040.0 * k_2 - 28352.0 * k_3 + 9295.0 * k_4 - 5643.0 * k_5)
+        / 20520.0
+    )
     k_6 = h * f(y_6, t + h / 2.0, *args)
 
     # Calculate error
-    error = (np.abs(209 * k_1 - 2252.8 * k_3 - 2197.0 * k_4 + 1504.8 * k_5
-                + 2736.0 * k_6) / 75240.0).max()
+    error = (
+        np.abs(209 * k_1 - 2252.8 * k_3 - 2197.0 * k_4 + 1504.8 * k_5 + 2736.0 * k_6)
+        / 75240.0
+    ).max()
 
     # Either don't take a step or use the RK4 step
     if error < tol or h <= h_min:
-        y_new = y + (2375.0 * k_1 + 11264.0 * k_3 + 10985 * k_4
-                     - 4104.0 * k_5) / 20520.0
+        y_new = (
+            y + (2375.0 * k_1 + 11264.0 * k_3 + 10985 * k_4 - 4104.0 * k_5) / 20520.0
+        )
         t += h
     else:
         y_new = y
@@ -373,7 +390,7 @@ def rkf45_step(f, y, t, args, h, tol, s_bounds, h_min):
     if error == 0.0:
         s = s_bounds[1]
     else:
-        s = (tol * h / 2.0 / error)**0.25
+        s = (tol * h / 2.0 / error) ** 0.25
     if s < s_bounds[0]:
         s = s_bounds[0]
     elif s > s_bounds[1]:
@@ -382,8 +399,16 @@ def rkf45_step(f, y, t, args, h, tol, s_bounds, h_min):
     return y_new, t, max(s * h, h_min)
 
 
-def rkf45(f, initial_cond, time_points, args=(), dt=None,
-          tol=1.0e-7, s_bounds=(0.1, 10.0), h_min=0.0):
+def rkf45(
+    f,
+    initial_cond,
+    time_points,
+    args=(),
+    dt=None,
+    tol=1.0e-7,
+    s_bounds=(0.1, 10.0),
+    h_min=0.0,
+):
     """
     Solve a system of ODEs using explicit Runge-Kutta-Fehlberg 4-5
     time stepping.
@@ -422,27 +447,26 @@ def rkf45(f, initial_cond, time_points, args=(), dt=None,
             t_sol.append(t)
         i += 1
         if np.isnan(y_0).any():
-            raise ValueError('Solution blew up! Try reducing dt.')
+            raise ValueError("Solution blew up! Try reducing dt.")
 
-    return interpolate_solution(np.array(y).transpose(),
-                                np.array(t_sol), time_points)
+    return interpolate_solution(np.array(y).transpose(), np.array(t_sol), time_points)
 
 
 @numba.jit(nopython=True)
 def laplacian_fd(a, hx, hy):
     dx = -2 * np.copy(a)
     dy = -2 * np.copy(a)
-    dx[1:,:] += a[:-1,:]
-    dx[0,:] += a[-1,:]
-    dx[:-1, :] += a[1:,:]
-    dx[-1, :] += a[0,:]
+    dx[1:, :] += a[:-1, :]
+    dx[0, :] += a[-1, :]
+    dx[:-1, :] += a[1:, :]
+    dx[-1, :] += a[0, :]
 
-    dy[:,1:] += a[:,:-1]
-    dy[:,0] += a[:,-1]
-    dy[:,:-1] += a[:,1:]
-    dy[:,-1] += a[:,0]
+    dy[:, 1:] += a[:, :-1]
+    dy[:, 0] += a[:, -1]
+    dy[:, :-1] += a[:, 1:]
+    dy[:, -1] += a[:, 0]
 
-    return dx/hx**2 + dy/hy**2
+    return dx / hx ** 2 + dy / hy ** 2
 
 
 def spectral_integrate_2d(f, L=None):
@@ -468,7 +492,7 @@ def spectral_integrate_2d(f, L=None):
 
     # Specify lengths if not given
     if L is None:
-        L = (2*np.pi, 2*np.pi)
+        L = (2 * np.pi, 2 * np.pi)
 
     # Compute integral
     int_x = L[0] / nx * np.sum(f, axis=0)
@@ -501,19 +525,19 @@ def interpolate_solution(y, t_sol, t):
     y_real_interp = np.empty((y.shape[0], len(t)))
     for i in range(y.shape[0]):
         # Make B-spline
-        tck = scipy.interpolate.splrep(t_sol, y.real[i,:])
+        tck = scipy.interpolate.splrep(t_sol, y.real[i, :])
 
         # Evaluate B-spline at desired points
-        y_real_interp[i,:] = scipy.interpolate.splev(t, tck)
+        y_real_interp[i, :] = scipy.interpolate.splev(t, tck)
 
     if np.iscomplex(y).any():
         y_imag_interp = np.zeros((y.shape[0], len(t)))
         for i in range(y.shape[0]):
             # Make B-spline
-            tck = scipy.interpolate.splrep(t_sol, y.imag[i,:])
+            tck = scipy.interpolate.splrep(t_sol, y.imag[i, :])
 
             # Evaluate B-spline at desired points
-            y_imag_interp[i,:] = scipy.interpolate.splev(t, tck)
+            y_imag_interp[i, :] = scipy.interpolate.splev(t, tck)
 
         return y_real_interp + 1j * y_imag_interp
     else:

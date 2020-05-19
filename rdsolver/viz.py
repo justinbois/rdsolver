@@ -16,7 +16,7 @@ import bokeh.application.handlers
 import ipywidgets
 
 
-def display_notebook(time_points, c, plot_height=400):
+def display_notebook(time_points, c, frame_height=400):
     """
     Build display of results of RD simulation.
 
@@ -30,7 +30,7 @@ def display_notebook(time_points, c, plot_height=400):
         Index 1: x-coordinate
         Index 2: y-coordinate
         Index 3: time coodinate
-    plot_height : int, default 400
+    frame_height : int, default 400
         Height of plot, in pixels.
 
     Notes
@@ -44,12 +44,11 @@ def display_notebook(time_points, c, plot_height=400):
     if len(c.shape) == 3:
         c = c.reshape((1, *c.shape))
     if len(c.shape) != 4:
-        raise RuntimeError(
-                'c must be n_species x nx x ny x n_time_points array.')
+        raise RuntimeError("c must be n_species x nx x ny x n_time_points array.")
 
     # Make sure number of time points matches concentration dimensions
     if c.shape[3] != len(time_points):
-        raise RuntimeError('Number of time points must equal c.shape[3].')
+        raise RuntimeError("Number of time points must equal c.shape[3].")
 
     # Determine maximal and minimal concentrations in each channel
     c_max = c.max(axis=(1, 2, 3))
@@ -64,44 +63,48 @@ def display_notebook(time_points, c, plot_height=400):
     n, m = c.shape[1:3]
 
     # Set up figure with appropriate dimensions
-    plot_width = int(m/n * plot_height)
+    frame_width = int(m / n * frame_height)
 
     def _plot_app(doc):
-        p = bokeh.plotting.figure(plot_height=plot_height,
-                                  plot_width=plot_width,
-                                  x_range=[0, m], 
-                                  y_range=[0, n])
+        p = bokeh.plotting.figure(
+            frame_height=frame_height,
+            frame_width=frame_width,
+            x_range=[0, m],
+            y_range=[0, n],
+        )
 
         # Add the image to the plot
         if c.shape[0] == 1:
             color = bokeh.models.LinearColorMapper(
-                    bokeh.palettes.viridis(256), low=c_min[0], high=c_max[0])
-            source = bokeh.models.ColumnDataSource(
-                                        data={'image': [c[0,:,:,0]]})
-            p.image(image='image', x=0, y=0, dw=m, dh=n, source=source,
-                    color_mapper=color)
+                bokeh.palettes.viridis(256), low=c_min[0], high=c_max[0]
+            )
+            source = bokeh.models.ColumnDataSource(data={"image": [c[0, :, :, 0]]})
+            p.image(
+                image="image", x=0, y=0, dw=m, dh=n, source=source, color_mapper=color
+            )
         else:
-            im_disp = make_cmy_image(c[:,:,:,0], *c_max, *c_min)
-            source = bokeh.models.ColumnDataSource(data={'image': [im_disp]})
-            p.image_rgba(image='image', x=0, y=0, dw=m, dh=n, source=source)
+            im_disp = make_cmy_image(c[:, :, :, 0], *c_max, *c_min)
+            source = bokeh.models.ColumnDataSource(data={"image": [im_disp]})
+            p.image_rgba(image="image", x=0, y=0, dw=m, dh=n, source=source)
 
         def _callback(attr, old, new):
-            i = np.searchsorted(time_points, slider.value) 
+            i = np.searchsorted(time_points, slider.value)
 
             if c.shape[0] == 1:
-                im_disp = c[0,:,:,i]
+                im_disp = c[0, :, :, i]
             else:
-                im_disp = make_cmy_image(c[:,:,:,i], *c_max, *c_min)
+                im_disp = make_cmy_image(c[:, :, :, i], *c_max, *c_min)
 
-            source.data = {'image': [im_disp]}
+            source.data = {"image": [im_disp]}
 
         slider = bokeh.models.Slider(
             start=time_points[0],
             end=time_points[-1],
             value=time_points[0],
             step=1 / len(time_points) * (time_points[1] - time_points[0]),
-            title='time')
-        slider.on_change('value', _callback)
+            title="time",
+        )
+        slider.on_change("value", _callback)
 
         # Add the plot to the app
         doc.add_root(bokeh.layouts.column(p, slider))
@@ -110,7 +113,7 @@ def display_notebook(time_points, c, plot_height=400):
     return bokeh.application.Application(handler)
 
 
-def display_single_frame(c, i=-1, plot_height=400):
+def display_single_frame(c, i=-1, frame_height=400):
     """
     Display the concentration field of a single time point.
 
@@ -124,7 +127,7 @@ def display_single_frame(c, i=-1, plot_height=400):
         Index 3: time coodinate
     i : int, default -1
         Index of time point you want displayed.
-    plot_height : int, default 400
+    frame_height : int, default 400
         Height of plot, in pixels.
     notebook : bool, default True
         If True, display in notebook. Otherwise, create and display
@@ -138,59 +141,92 @@ def display_single_frame(c, i=-1, plot_height=400):
     if len(c.shape) == 2:
         c = c.reshape((1, *c.shape, 1))
         if i not in [0, -1]:
-            raise RuntimeError('For single image, cannot specify i.')
+            raise RuntimeError("For single image, cannot specify i.")
     elif len(c.shape) == 3:
         c = c.reshape((1, *c.shape))
         if i not in [0, -1]:
-            raise RuntimeError('For single image, cannot specify i.')
+            raise RuntimeError("For single image, cannot specify i.")
     if len(c.shape) != 4:
-        raise RuntimeError(
-                'c must be n_species x nx x ny x n_time_points array.')
+        raise RuntimeError("c must be n_species x nx x ny x n_time_points array.")
 
     # Get shape
     n, m = c.shape[1:3]
 
     # Set up figure with appropriate dimensions
-    plot_height = plot_height
-    plot_width = int(m/n * plot_height)
-    p = bokeh.plotting.figure(plot_height=plot_height, plot_width=plot_width,
-                              x_range=[0, m], y_range=[0, n],
-                              tools='pan,box_zoom,wheel_zoom,save,reset')
+    frame_height = frame_height
+    frame_width = int(m / n * frame_height)
+    p = bokeh.plotting.figure(
+        frame_height=frame_height,
+        frame_width=frame_width,
+        x_range=[0, m],
+        y_range=[0, n],
+        tools="pan,box_zoom,wheel_zoom,save,reset",
+    )
 
     # If single channel, display with viridis
     if c.shape[0] == 1:
         color = bokeh.models.LinearColorMapper(bokeh.palettes.viridis(256))
-        p.image(image=[c[0,:,:,i]], x=0, y=0, dw=m, dh=n,
-                           color_mapper=color)
+        p.image(image=[c[0, :, :, i]], x=0, y=0, dw=m, dh=n, color_mapper=color)
     else:
-        p.image_rgba(image=[make_cmy_image(c[:,:,:,i])], x=0, y=0, dw=m, dh=n)
+        p.image_rgba(image=[make_cmy_image(c[:, :, :, i])], x=0, y=0, dw=m, dh=n)
 
     return p
 
 
-def make_cmy_image(c, im_cyan_max=None, im_mag_max=None, im_yell_max=None,
-                   im_cyan_min=None, im_mag_min=None, im_yell_min=None):
+def make_cmy_image(
+    c,
+    im_cyan_max=None,
+    im_mag_max=None,
+    im_yell_max=None,
+    im_cyan_min=None,
+    im_mag_min=None,
+    im_yell_min=None,
+):
     """
     Make an RGBA CMY image from a concentration field.
     """
 
     if c.shape[0] == 2:
-        im = im_merge_cmy(c[0,:,:], c[1,:,:], None, im_cyan_max, im_mag_max,
-                          im_yell_max, im_cyan_min, im_mag_min, im_yell_min)
+        im = im_merge_cmy(
+            c[0, :, :],
+            c[1, :, :],
+            None,
+            im_cyan_max,
+            im_mag_max,
+            im_yell_max,
+            im_cyan_min,
+            im_mag_min,
+            im_yell_min,
+        )
     elif c.shape[0] == 3:
-        im = im_merge_cmy(c[0,:,:], c[1,:,:], c[2,:,:], im_cyan_max,
-                          im_mag_max, im_yell_max, im_cyan_min, im_mag_min,
-                          im_yell_min)
+        im = im_merge_cmy(
+            c[0, :, :],
+            c[1, :, :],
+            c[2, :, :],
+            im_cyan_max,
+            im_mag_max,
+            im_yell_max,
+            im_cyan_min,
+            im_mag_min,
+            im_yell_min,
+        )
     else:
-        raise RuntimeError(
-                        'Too many channels. Select up to three to display.')
+        raise RuntimeError("Too many channels. Select up to three to display.")
 
     return rgb_to_rgba32(im)
 
 
-def im_merge_cmy(im_cyan, im_mag, im_yell=None, im_cyan_max=None,
-                 im_mag_max=None, im_yell_max=None, im_cyan_min=None,
-                 im_mag_min=None, im_yell_min=None):
+def im_merge_cmy(
+    im_cyan,
+    im_mag,
+    im_yell=None,
+    im_cyan_max=None,
+    im_mag_max=None,
+    im_yell_max=None,
+    im_cyan_min=None,
+    im_mag_min=None,
+    im_yell_min=None,
+):
     """
     Merge channels to make RGB image that has cyan, magenta, and
     yellow.
@@ -224,7 +260,6 @@ def im_merge_cmy(im_cyan, im_mag, im_yell=None, im_cyan_max=None,
         RGB image the give CMY coloring of image
     """
 
-
     # Compute max intensities if needed
     if im_cyan_max is None:
         im_cyan_max = im_cyan.max()
@@ -242,14 +277,20 @@ def im_merge_cmy(im_cyan, im_mag, im_yell=None, im_cyan_max=None,
         im_yell_min = im_yell.min()
 
     # Make sure maxes are ok
-    if im_cyan_max < im_cyan.max() or im_mag_max < im_mag.max() \
-            or (im_yell is not None and im_yell_max < im_yell.max()):
-        raise RuntimeError('Inputted max of channel < max of inputted channel.')
+    if (
+        im_cyan_max < im_cyan.max()
+        or im_mag_max < im_mag.max()
+        or (im_yell is not None and im_yell_max < im_yell.max())
+    ):
+        raise RuntimeError("Inputted max of channel < max of inputted channel.")
 
     # Make sure mins are ok
-    if im_cyan_min > im_cyan.min() or im_mag_min > im_mag.min() \
-            or (im_yell is not None and im_yell_min > im_yell.min()):
-        raise RuntimeError('Inputted min of channel > min of inputted channel.')
+    if (
+        im_cyan_min > im_cyan.min()
+        or im_mag_min > im_mag.min()
+        or (im_yell is not None and im_yell_min > im_yell.min())
+    ):
+        raise RuntimeError("Inputted min of channel > min of inputted channel.")
 
     # Scale the images
     im_c = (im_cyan - im_cyan_min) / (im_cyan_max - im_cyan_min)
@@ -265,7 +306,7 @@ def im_merge_cmy(im_cyan, im_mag, im_yell=None, im_cyan_max=None,
     im_y = np.stack((im_y, im_y, np.zeros_like(im_y)), axis=2)
     im_rgb = im_c + im_m + im_y
     for i in [0, 1, 2]:
-        im_rgb[:,:,i] /= im_rgb[:,:,i].max()
+        im_rgb[:, :, i] /= im_rgb[:, :, i].max()
 
     return im_rgb
 
@@ -285,28 +326,28 @@ def rgb_to_rgba32(im):
         Image decoded as a 32 bit RBGA image.
     """
     # Ensure it has three channels
-    if im.ndim != 3 or im.shape[2] !=3:
-        raise RuntimeError('Input image is not RGB.')
+    if im.ndim != 3 or im.shape[2] != 3:
+        raise RuntimeError("Input image is not RGB.")
 
     # Make sure all entries between zero and one
     if (im < 0).any() or (im > 1).any():
-        raise RuntimeError('All pixel values must be between 0 and 1.')
+        raise RuntimeError("All pixel values must be between 0 and 1.")
 
     # Get image shape
     n, m, _ = im.shape
 
     # Convert to 8-bit, which is expected for viewing
     with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
+        warnings.simplefilter("ignore")
         im_8 = skimage.img_as_ubyte(im)
 
     # Add the alpha channel, which is expected by Bokeh
-    im_rgba = np.stack((*np.rollaxis(im_8, 2),
-                        255*np.ones((n, m), dtype=np.uint8)), axis=2)
+    im_rgba = np.stack(
+        (*np.rollaxis(im_8, 2), 255 * np.ones((n, m), dtype=np.uint8)), axis=2
+    )
 
     # Reshape into 32 bit. Must flip up/down for proper orientation
     return np.flipud(im_rgba.view(dtype=np.int32).reshape((n, m)))
-
 
 
 def interpolate_2d(a, n_interp_points=(200, 200)):
@@ -330,10 +371,10 @@ def interpolate_2d(a, n_interp_points=(200, 200)):
     # Set up grids
     x = np.arange(a.shape[0])
     y = np.arange(a.shape[1])
-    xx, yy = np.meshgrid(x, y, indexing='ij')
+    xx, yy = np.meshgrid(x, y, indexing="ij")
     x_interp = np.linspace(x[0], x[-1], n_interp_points[0])
     y_interp = np.linspace(y[0], y[-1], n_interp_points[1])
-    xx_interp, yy_interp = np.meshgrid(x_interp, y_interp, indexing='ij')
+    xx_interp, yy_interp = np.meshgrid(x_interp, y_interp, indexing="ij")
 
     # Perform B-spline interpolation
     spline = scipy.interpolate.RectBivariateSpline(x, y, a, s=0)
@@ -364,6 +405,6 @@ def interpolate_concs(c, n_interp_points=(200, 200)):
     # Interpolate each species for each time point.
     for i in range(c.shape[-1]):
         for j in range(c.shape[0]):
-            c_interp[j,:,:,i] = interpolate_2d(c[j,:,:,i], n_interp_points)
+            c_interp[j, :, :, i] = interpolate_2d(c[j, :, :, i], n_interp_points)
 
     return c_interp

@@ -19,9 +19,16 @@ import tqdm
 from . import utils
 
 
-def initial_condition(uniform_conc=None, n=None, L=None, n_bumps=20,
-                      bump_width_range=(0.025, 0.1), max_amplitude=0.005,
-                      fixed_amplitude=None, species=None):
+def initial_condition(
+    uniform_conc=None,
+    n=None,
+    L=None,
+    n_bumps=20,
+    bump_width_range=(0.025, 0.1),
+    max_amplitude=0.005,
+    fixed_amplitude=None,
+    species=None,
+):
     """
     Generate initial condition as a small perturbation from uniform c0.
 
@@ -61,10 +68,10 @@ def initial_condition(uniform_conc=None, n=None, L=None, n_bumps=20,
        prevent the possibility of negative concentrations.
     """
     if uniform_conc is None:
-        raise RuntimeError('uniform_conc must be given.')
+        raise RuntimeError("uniform_conc must be given.")
 
     if n is None:
-        raise RuntimeError('n must be given as a 2-tuple.')
+        raise RuntimeError("n must be given as a 2-tuple.")
 
     # Get dimensions
     L = _check_L(L)
@@ -84,11 +91,16 @@ def initial_condition(uniform_conc=None, n=None, L=None, n_bumps=20,
     _, _, _, _, x_grid, y_grid = utils.grid_points_2d(n, L=L)
 
     # Multiplier factor to smooth out edges
-    mult_factor = \
-        (1.0 + scipy.special.erf(40.0 * (x_grid - 0.1 * L[0]) / L[0])) / 2.0 \
-      * (1.0 - scipy.special.erf(40.0 * (x_grid - 0.9 * L[0]) / L[0])) / 2.0 \
-      * (1.0 + scipy.special.erf(40.0 * (y_grid - 0.1 * L[1]) / L[1])) / 2.0 \
-      * (1.0 - scipy.special.erf(40.0 * (y_grid - 0.9 * L[1]) / L[1])) / 2.0
+    mult_factor = (
+        (1.0 + scipy.special.erf(40.0 * (x_grid - 0.1 * L[0]) / L[0]))
+        / 2.0
+        * (1.0 - scipy.special.erf(40.0 * (x_grid - 0.9 * L[0]) / L[0]))
+        / 2.0
+        * (1.0 + scipy.special.erf(40.0 * (y_grid - 0.1 * L[1]) / L[1]))
+        / 2.0
+        * (1.0 - scipy.special.erf(40.0 * (y_grid - 0.9 * L[1]) / L[1]))
+        / 2.0
+    )
 
     # Make bumps
     c0 = np.stack([u * np.ones(n) for u in uniform_conc])
@@ -96,21 +108,27 @@ def initial_condition(uniform_conc=None, n=None, L=None, n_bumps=20,
         for j in range(n_bumps):
             x_pos = np.random.rand() * L[0]
             y_pos = np.random.rand() * L[1]
-            width = max(L[0], L[1]) * (bump_width_range[0] \
-              + (bump_width_range[1] - bump_width_range[0]) * np.random.rand())
+            width = max(L[0], L[1]) * (
+                bump_width_range[0]
+                + (bump_width_range[1] - bump_width_range[0]) * np.random.rand()
+            )
             if fixed_amplitude is None:
                 amp = max_amplitude * np.random.rand()
             else:
                 amp = fixed_amplitude
-            c0[i,:,:] += mult_factor * amp \
-                * np.exp(-(x_grid - x_pos)**2 / 2.0 / width**2) \
-                * np.exp(-(y_grid - y_pos)**2 / 2.0 / width**2)
+            c0[i, :, :] += (
+                mult_factor
+                * amp
+                * np.exp(-((x_grid - x_pos) ** 2) / 2.0 / width ** 2)
+                * np.exp(-((y_grid - y_pos) ** 2) / 2.0 / width ** 2)
+            )
 
     return c0
 
 
-def dc_dt(c, t, n_species, n, D, beta, gamma, f=None, f_args=(),
-          L=None, diff_multiplier=None):
+def dc_dt(
+    c, t, n_species, n, D, beta, gamma, f=None, f_args=(), L=None, diff_multiplier=None
+):
     """
     Right hand side of R-D dynamics in real space.
 
@@ -148,8 +166,9 @@ def dc_dt(c, t, n_species, n, D, beta, gamma, f=None, f_args=(),
     # Compute diffusive and constant production terms
     for i in range(n_species):
         dx, dy = utils.diff_periodic_fft_2d(
-                    c2d[i,:,:], order=2, L=L, diff_multiplier=diff_multiplier)
-        rhs[i,:,:] = beta[i] + D[i] * (dx + dy)
+            c2d[i, :, :], order=2, L=L, diff_multiplier=diff_multiplier
+        )
+        rhs[i, :, :] = beta[i] + D[i] * (dx + dy)
 
     # Other linear terms
     rhs += _multiply_gamma(gamma, c2d)
@@ -169,22 +188,34 @@ def _multiply_gamma(gamma, c):
     out = np.empty_like(c)
     for i in range(c.shape[1]):
         for j in range(c.shape[2]):
-            out[:,i,j] = np.dot(gamma, c[:,i,j])
+            out[:, i, j] = np.dot(gamma, np.ascontiguousarray(c[:, i, j]))
     return out
 
 
-def rkf45_2d(c0, time_points, n_species, n, D=None, beta=None,
-             gamma=None, f=None, f_args=(), L=None, diff_multiplier=None,
-             dt0=0.000001, **kw):
+def rkf45_2d(
+    c0,
+    time_points,
+    n_species,
+    n,
+    D=None,
+    beta=None,
+    gamma=None,
+    f=None,
+    f_args=(),
+    L=None,
+    diff_multiplier=None,
+    dt0=0.000001,
+    **kw,
+):
     """
     Solve using Runge-Kutta-Fehlberg.
     """
 
     # Make sure all required kwargs are specified
-    if any(x is None for x in
-            [D, beta, gamma, f, f_args, L, diff_multiplier]):
-        raise RuntimeError('D, beta, gamma, f, f_args, L, '
-                           + 'diff_multipler, must all be specified.')
+    if any(x is None for x in [D, beta, gamma, f, f_args, L, diff_multiplier]):
+        raise RuntimeError(
+            "D, beta, gamma, f, f_args, L, " + "diff_multipler, must all be specified."
+        )
 
     # Total number of grid points
     n_tot = n[0] * n[1]
@@ -197,11 +228,30 @@ def rkf45_2d(c0, time_points, n_species, n, D=None, beta=None,
     return c.reshape((n_species, *n, len(time_points)))
 
 
-def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
-              f=None, f_args=(), L=None, diff_multiplier=None, k2=None,
-              dt0=1e-6, dt_bounds=(0.000001, 100.0), allow_negative=False,
-              vsimex_tol=0.001, vsimex_tol_buffer=0.01, k_P=0.075, k_I=0.175,
-              k_D=0.01, s_bounds=(0.1, 10.0), quiet=False):
+def vsimex_2d(
+    c0,
+    time_points,
+    n_species,
+    n,
+    D=None,
+    beta=None,
+    gamma=None,
+    f=None,
+    f_args=(),
+    L=None,
+    diff_multiplier=None,
+    k2=None,
+    dt0=1e-6,
+    dt_bounds=(0.000001, 100.0),
+    allow_negative=False,
+    vsimex_tol=0.001,
+    vsimex_tol_buffer=0.01,
+    k_P=0.075,
+    k_I=0.175,
+    k_D=0.01,
+    s_bounds=(0.1, 10.0),
+    quiet=False,
+):
     """
     Does adaptive step size Adams-Bashforth/Crank-Nicholson
     integration.
@@ -211,10 +261,11 @@ def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
     """
 
     # Make sure all required kwargs are specified
-    if any(x is None for x in
-            [D, beta, gamma, f, f_args, L, diff_multiplier, k2]):
-        raise RuntimeError('D, beta, gamma, f, f_args, L, '
-                           + 'diff_multipler, k2 must all be specified.')
+    if any(x is None for x in [D, beta, gamma, f, f_args, L, diff_multiplier, k2]):
+        raise RuntimeError(
+            "D, beta, gamma, f, f_args, L, "
+            + "diff_multipler, k2 must all be specified."
+        )
 
     # Total number of grid points
     n_tot = n[0] * n[1]
@@ -226,29 +277,33 @@ def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
     tiny_conc = 1e-9
 
     # Do Runge-Kutta-Fehlberg to get to first few time points
-    dt = tuple([dt0]*3)
-    rkf45_time_points = np.array([time_points[0],
-                                  time_points[0] + dt[0],
-                                  time_points[0] + dt[0] + dt[1]])
+    dt = tuple([dt0] * 3)
+    rkf45_time_points = np.array(
+        [time_points[0], time_points[0] + dt[0], time_points[0] + dt[0] + dt[1]]
+    )
     args = (n_species, n, D, beta, gamma, f, f_args, L, diff_multiplier)
-    rkf45_output = utils.rkf45(dc_dt, c0.flatten(), rkf45_time_points,
-                               args=args, dt=dt[0]/10)
+    rkf45_output = utils.rkf45(
+        dc_dt, c0.flatten(), rkf45_time_points, args=args, dt=dt[0] / 10
+    )
 
     # Initialize previous steps from solution
-    u = (rkf45_output[:,-2], rkf45_output[:,-1])
+    u = (rkf45_output[:, -2], rkf45_output[:, -1])
 
     # Initialize the relative change from the time steps
-    rel_change = (np.linalg.norm(u[1] - u[0]) / np.linalg.norm(u[1]),
-                  np.linalg.norm(u[0] - c0.flatten()) / np.linalg.norm(u[0]))
+    rel_change = (
+        np.linalg.norm(u[1] - u[0]) / np.linalg.norm(u[1]),
+        np.linalg.norm(u[0] - c0.flatten()) / np.linalg.norm(u[0]),
+    )
 
     # Pull out concentrations and compute FFTs
     c = u[1].reshape((n_species, *n))
-    c_hat = np.fft.fftn(c, axes=(1,2))
+    c_hat = np.fft.fftn(c, axes=(1, 2))
 
     # Compute initial f_hat
-    f_hat = (np.fft.fft2(
-            f(u[0].reshape((n_species, *n)), time_points[0] + dt[0], *f_args)),
-                np.fft.fft2(f(c, time_points[0] + dt[0] + dt[1], *f_args)))
+    f_hat = (
+        np.fft.fft2(f(u[0].reshape((n_species, *n)), time_points[0] + dt[0], *f_args)),
+        np.fft.fft2(f(c, time_points[0] + dt[0] + dt[1], *f_args)),
+    )
 
     # Set up return variables
     u_sol = [c0.flatten()]
@@ -267,8 +322,9 @@ def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
         next_time_point_index = np.searchsorted(time_points, t)
         while t < time_points[next_time_point_index]:
             # Compute the CNAB2 step
-            c_hat_step = cnab2_step(dt[2], dt[1], c_hat, f_hat[1],
-                                    f_hat[0], D, beta, gamma, k2)
+            c_hat_step = cnab2_step(
+                dt[2], dt[1], c_hat, f_hat[1], f_hat[0], D, beta, gamma, k2
+            )
 
             # Convert to real space and build u_step
             c_step = np.fft.ifftn(c_hat_step, axes=(1, 2)).real
@@ -276,39 +332,60 @@ def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
 
             # Perform check for negative concentrations
             if not allow_negative:
-                u_step, c_step, c_hat_step, reject_step_because_negative, dt = \
-                    _check_for_negative_concs(u_step, c_step, c_hat_step, dt,
-                                              dt_bounds, tiny_conc=tiny_conc,
-                                              quiet=quiet)
+                (
+                    u_step,
+                    c_step,
+                    c_hat_step,
+                    reject_step_because_negative,
+                    dt,
+                ) = _check_for_negative_concs(
+                    u_step,
+                    c_step,
+                    c_hat_step,
+                    dt,
+                    dt_bounds,
+                    tiny_conc=tiny_conc,
+                    quiet=quiet,
+                )
             else:
                 reject_step_because_negative = False
 
             # Compute the relative change
-            rel_change_step = np.linalg.norm(u_step - u[1]) / \
-                                                np.linalg.norm(u_step)
+            rel_change_step = np.linalg.norm(u_step - u[1]) / np.linalg.norm(u_step)
 
             # If relative change less than tolerance, take step
             if not reject_step_because_negative:
-                if rel_change_step <= vsimex_tol * (1.0 + vsimex_tol_buffer) \
-                        or dt[2] <= dt_bounds[0]:
+                if (
+                    rel_change_step <= vsimex_tol * (1.0 + vsimex_tol_buffer)
+                    or dt[2] <= dt_bounds[0]
+                ):
                     # Take the step
                     c_hat, c, u, t, f_hat = _take_step(
-                            c_hat_step, c, u, t, f_hat, c_step, u_step, dt, f,
-                            f_args)
+                        c_hat_step, c, u, t, f_hat, c_step, u_step, dt, f, f_args
+                    )
 
                     # Adjust step size
                     dt, rel_change = _adjust_step_size_pid(
-                            dt, rel_change, rel_change_step, vsimex_tol, k_P,
-                            k_I, k_D, dt_bounds, s_bounds)
+                        dt,
+                        rel_change,
+                        rel_change_step,
+                        vsimex_tol,
+                        k_P,
+                        k_I,
+                        k_D,
+                        dt_bounds,
+                        s_bounds,
+                    )
                 else:
                     # Adjust step size, but do not take step
                     # (step may already have been taken if we had neg. conc.)
                     dt = _adjust_step_size_rejected_step(
-                          dt, rel_change_step, vsimex_tol, dt_bounds, s_bounds)
+                        dt, rel_change_step, vsimex_tol, dt_bounds, s_bounds
+                    )
 
         # If the solution blew up, raise an exception
         if np.isnan(u[1]).any() != 0:
-            raise RuntimeError('Solution blew up!')
+            raise RuntimeError("Solution blew up!")
 
         # Store outputs
         t_sol.append(t)
@@ -319,7 +396,8 @@ def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
 
     # Interpolate solution
     u_interp = utils.interpolate_solution(
-        np.array(u_sol).transpose(), np.array(t_sol), time_points)
+        np.array(u_sol).transpose(), np.array(t_sol), time_points
+    )
 
     pbar.close()
 
@@ -327,21 +405,39 @@ def vsimex_2d(c0, time_points, n_species, n, D=None, beta=None, gamma=None,
     return u_interp.reshape((n_species, *n, len(time_points)))
 
 
-def solve(c0, time_points, D=None, beta=None, gamma=None,
-          f=None, f_args=(), L=None, diff_multiplier=None, dt0=1e-6,
-          dt_bounds=(0.000001, 100.0), allow_negative=False,
-          vsimex_tol=0.001, vsimex_tol_buffer=0.01, k_P=0.075, k_I=0.175,
-          k_D=0.01, s_bounds=(0.1, 10.0), quiet=False, solver=vsimex_2d):
+def solve(
+    c0,
+    time_points,
+    D=None,
+    beta=None,
+    gamma=None,
+    f=None,
+    f_args=(),
+    L=None,
+    diff_multiplier=None,
+    dt0=1e-6,
+    dt_bounds=(0.000001, 100.0),
+    allow_negative=False,
+    vsimex_tol=0.001,
+    vsimex_tol_buffer=0.01,
+    k_P=0.075,
+    k_I=0.175,
+    k_D=0.01,
+    s_bounds=(0.1, 10.0),
+    quiet=False,
+    solver=vsimex_2d,
+):
     """
     Solve a reaction-diffusion system in two-dimensions.
     """
     # Check and convert inputs
-    c0, n_species, n, L, D, beta, gamma, f_args = \
-                _check_and_update_inputs(c0, L, D, beta, gamma, f, f_args)
+    c0, n_species, n, L, D, beta, gamma, f_args = _check_and_update_inputs(
+        c0, L, D, beta, gamma, f, f_args
+    )
 
     # Compute square of wave numbers
     kx, ky = utils.wave_numbers_2d(n, L=L)
-    k2 = (kx**2 + ky**2)
+    k2 = kx ** 2 + ky ** 2
 
     # Differencing multiplier for Laplacian
     diff_multiplier = utils.diff_multiplier_periodic_2d(n, order=2)
@@ -353,16 +449,47 @@ def solve(c0, time_points, D=None, beta=None, gamma=None,
 
     # Solve
     if solver == rkf45_numba:
-        return rkf45_numba(c0, time_points, n_species, n, D, beta, gamma,
-                           f, f_args, L, dt0, tol=1e-7,
-                           s_bounds=(0.1, 10.0), h_min=0.0)
+        return rkf45_numba(
+            c0,
+            time_points,
+            n_species,
+            n,
+            D,
+            beta,
+            gamma,
+            f,
+            f_args,
+            L,
+            dt0,
+            tol=1e-7,
+            s_bounds=(0.1, 10.0),
+            h_min=0.0,
+        )
 
     return solver(
-        c0, time_points, n_species, n, D=D, beta=beta, gamma=gamma,
-        f=f, f_args=f_args, L=L, diff_multiplier=diff_multiplier, k2=k2,
-        dt0=dt0, dt_bounds=dt_bounds, allow_negative=allow_negative,
-        vsimex_tol=vsimex_tol, vsimex_tol_buffer=vsimex_tol_buffer, k_P=k_P,
-        k_I=k_I, k_D=k_D, s_bounds=s_bounds, quiet=quiet)
+        c0,
+        time_points,
+        n_species,
+        n,
+        D=D,
+        beta=beta,
+        gamma=gamma,
+        f=f,
+        f_args=f_args,
+        L=L,
+        diff_multiplier=diff_multiplier,
+        k2=k2,
+        dt0=dt0,
+        dt_bounds=dt_bounds,
+        allow_negative=allow_negative,
+        vsimex_tol=vsimex_tol,
+        vsimex_tol_buffer=vsimex_tol_buffer,
+        k_P=k_P,
+        k_I=k_I,
+        k_D=k_D,
+        s_bounds=s_bounds,
+        quiet=quiet,
+    )
 
 
 def _take_step(c_hat_step, c, u, t, f_hat, c_step, u_step, dt, f, f_args):
@@ -378,8 +505,9 @@ def _take_step(c_hat_step, c, u, t, f_hat, c_step, u_step, dt, f, f_args):
     return c_hat, c, u, t, f_hat
 
 
-def _adjust_step_size_rejected_step(dt, rel_change_step, vsimex_tol, dt_bounds,
-                                    s_bounds):
+def _adjust_step_size_rejected_step(
+    dt, rel_change_step, vsimex_tol, dt_bounds, s_bounds
+):
     """
     Adjust step size for a rejected step.
     """
@@ -395,14 +523,17 @@ def _adjust_step_size_rejected_step(dt, rel_change_step, vsimex_tol, dt_bounds,
     return (dt[0], dt[1], new_dt)
 
 
-def _adjust_step_size_pid(dt, rel_change, rel_change_step, vsimex_tol, k_P,
-                          k_I, k_D, dt_bounds, s_bounds):
+def _adjust_step_size_pid(
+    dt, rel_change, rel_change_step, vsimex_tol, k_P, k_I, k_D, dt_bounds, s_bounds
+):
     """
     Adjust the step size using the PID controller.
     """
-    mult = (rel_change[1] / rel_change_step)**k_P \
-         * (vsimex_tol / rel_change_step)**k_I \
-         * (rel_change[0]**2 / rel_change[1] / rel_change_step)**k_D
+    mult = (
+        (rel_change[1] / rel_change_step) ** k_P
+        * (vsimex_tol / rel_change_step) ** k_I
+        * (rel_change[0] ** 2 / rel_change[1] / rel_change_step) ** k_D
+    )
     if mult > s_bounds[1]:
         mult = s_bounds[1]
     elif mult < s_bounds[0]:
@@ -421,8 +552,9 @@ def _adjust_step_size_pid(dt, rel_change, rel_change_step, vsimex_tol, k_P,
     return dt, rel_change
 
 
-def _check_for_negative_concs(u_step, c_step, c_hat_step, dt, dt_bounds,
-                              tiny_conc=1e-9, quiet=False):
+def _check_for_negative_concs(
+    u_step, c_step, c_hat_step, dt, dt_bounds, tiny_conc=1e-9, quiet=False
+):
     """
     Check to see is any concentrations went negative.
     """
@@ -434,7 +566,7 @@ def _check_for_negative_concs(u_step, c_step, c_hat_step, dt, dt_bounds,
             u_step = c_step.flatten()
             reject_step = False
             if not quiet:
-                print(' NEGATIVE CONC ZEROED OUT, TAKING TINY STEP ')
+                print(" NEGATIVE CONC ZEROED OUT, TAKING TINY STEP ")
         else:  # Cut step size by 2
             dt = (dt[0], dt[1], min(dt[2] / 2.0, dt_bounds[0]))
             reject_step = True
@@ -491,20 +623,23 @@ def cnab2_step(dt_current, dt0, c_hat, f_hat, f_hat0, D, beta, gamma, k2):
     for i in range(n[0]):
         for j in range(n[1]):
             # Build right hand side for linear solve
-            A_rhs = np.diag(1/dt_current - k2[i,j] * D / 2) + gamma / 2
+            A_rhs = np.diag(1 / dt_current - k2[i, j] * D / 2) + gamma / 2
 
-            rhs = (1 + omega/2) * f_hat[:,i,j] - omega/2 * f_hat0[:,i,j] \
-                    + np.dot(A_rhs, c_hat[:,i,j])
+            rhs = (
+                (1 + omega / 2) * f_hat[:, i, j]
+                - omega / 2 * f_hat0[:, i, j]
+                + np.dot(A_rhs, np.ascontiguousarray(c_hat[:, i, j]))
+            )
 
             # Add constant term, correcting for DC values in Numpy's FFT
             if i == 0 and j == 0:
                 rhs += beta * n[0] * n[1]
 
             # Build matrix
-            A = np.diag(1/dt_current + k2[i,j] * D / 2) - gamma / 2
+            A = np.diag(1 / dt_current + k2[i, j] * D / 2) - gamma / 2
 
             # Solve
-            c_hat_step[:,i,j] = np.linalg.solve(A, rhs)
+            c_hat_step[:, i, j] = np.linalg.solve(A, rhs)
 
     return c_hat_step
 
@@ -513,6 +648,7 @@ def make_rhs(c, t, D, beta, gamma, hx, hy, f, f_args):
     """
     Make a numba's version of dc_dt.
     """
+
     @numba.jit(nopython=True)
     def rhs(c, t, D, beta, gamma, hx, hy, f_args):
         result = np.empty_like(c)
@@ -520,8 +656,8 @@ def make_rhs(c, t, D, beta, gamma, hx, hy, f, f_args):
         # Linear terms of right-hand side
         for i, db in enumerate(zip(D, beta)):
             d, b = db
-            c_view = c[i,:,:]
-            result[i,:,:] = d * utils.laplacian_fd(c_view, hx, hy) + b
+            c_view = c[i, :, :]
+            result[i, :, :] = d * utils.laplacian_fd(c_view, hx, hy) + b
 
         # Other linear terms
         result += _multiply_gamma(gamma, c)
@@ -535,12 +671,13 @@ def make_rhs(c, t, D, beta, gamma, hx, hy, f, f_args):
     return rhs
 
 
-def make_rkf45_step(y, t, D, beta, gamma, hx, hy, rhs, f_args, h,
-                     tol, s_min, s_max, h_min):
-
+def make_rkf45_step(
+    y, t, D, beta, gamma, hx, hy, rhs, f_args, h, tol, s_min, s_max, h_min
+):
     @numba.jit(nopython=True)
-    def rkf45_step_numba(y, t, D, beta, gamma, hx, hy, f_args, h,
-                         tol, s_min, s_max, h_min):
+    def rkf45_step_numba(
+        y, t, D, beta, gamma, hx, hy, f_args, h, tol, s_min, s_max, h_min
+    ):
         """
         """
         k_1 = h * rhs(y, t, D, beta, gamma, hx, hy, f_args)
@@ -554,22 +691,36 @@ def make_rkf45_step(y, t, D, beta, gamma, hx, hy, rhs, f_args, h,
         y_4 = y + (1932.0 * k_1 - 7200.0 * k_2 + 7296.0 * k_3) / 2197.0
         k_4 = h * rhs(y_4, t + 12.0 * h / 13.0, D, beta, gamma, hx, hy, f_args)
 
-        y_5 = y + (8341.0 * k_1 - 32832.0 * k_2 + 29440.0 * k_3
-                   - 845.0 * k_4) / 4104.0
+        y_5 = y + (8341.0 * k_1 - 32832.0 * k_2 + 29440.0 * k_3 - 845.0 * k_4) / 4104.0
         k_5 = h * rhs(y_5, t + h, D, beta, gamma, hx, hy, f_args)
 
-        y_6 = y + (-6080.0 * k_1 + 41040.0 * k_2 - 28352.0 * k_3
-                    + 9295.0 * k_4 - 5643.0 * k_5) / 20520.0
+        y_6 = (
+            y
+            + (
+                -6080.0 * k_1
+                + 41040.0 * k_2
+                - 28352.0 * k_3
+                + 9295.0 * k_4
+                - 5643.0 * k_5
+            )
+            / 20520.0
+        )
         k_6 = h * rhs(y_6, t + h / 2.0, D, beta, gamma, hx, hy, f_args)
 
         # Calculate error
-        error = (np.abs(209 * k_1 - 2252.8 * k_3 - 2197.0 * k_4
-                        + 1504.8 * k_5 + 2736.0 * k_6) / 75240.0).max()
+        error = (
+            np.abs(
+                209 * k_1 - 2252.8 * k_3 - 2197.0 * k_4 + 1504.8 * k_5 + 2736.0 * k_6
+            )
+            / 75240.0
+        ).max()
 
         # Either don't take a step or use the RK4 step
         if error < tol or h <= h_min:
-            y_new = y + (2375.0 * k_1 + 11264.0 * k_3 + 10985 * k_4
-                         - 4104.0 * k_5) / 20520.0
+            y_new = (
+                y
+                + (2375.0 * k_1 + 11264.0 * k_3 + 10985 * k_4 - 4104.0 * k_5) / 20520.0
+            )
             t += h
         else:
             y_new = y
@@ -578,7 +729,7 @@ def make_rkf45_step(y, t, D, beta, gamma, hx, hy, rhs, f_args, h,
         if error == 0.0:
             s = s_max
         else:
-            s = (tol * h / 2.0 / error)**0.25
+            s = (tol * h / 2.0 / error) ** 0.25
         if s < s_min:
             s = s_min
         elif s > s_max:
@@ -589,8 +740,24 @@ def make_rkf45_step(y, t, D, beta, gamma, hx, hy, rhs, f_args, h,
     return rkf45_step_numba
 
 
-def make_rkf45_numba(c0, time_points, n_species, n, D, beta, gamma, f, f_args,
-                     hx, hy, dt0, tol, s_min, s_max, h_min=0.0):
+def make_rkf45_numba(
+    c0,
+    time_points,
+    n_species,
+    n,
+    D,
+    beta,
+    gamma,
+    f,
+    f_args,
+    hx,
+    hy,
+    dt0,
+    tol,
+    s_min,
+    s_max,
+    h_min=0.0,
+):
 
     # Make sure f is numba'd
     if type(f) != type(f) == numba.targets.registry.CPUDispatcher:
@@ -598,13 +765,41 @@ def make_rkf45_numba(c0, time_points, n_species, n, D, beta, gamma, f, f_args,
 
     # Make Numba'd funcs
     rhs = make_rhs(c0, time_points[0], D, beta, gamma, hx, hy, f, f_args)
-    rkf45_step_numba = make_rkf45_step(c0, time_points[0], D, beta, gamma, hx,
-                                       hy, rhs, f_args, dt0, tol, s_min,
-                                       s_max, h_min)
+    rkf45_step_numba = make_rkf45_step(
+        c0,
+        time_points[0],
+        D,
+        beta,
+        gamma,
+        hx,
+        hy,
+        rhs,
+        f_args,
+        dt0,
+        tol,
+        s_min,
+        s_max,
+        h_min,
+    )
 
     @numba.jit(nopython=True)
-    def rkf45_solve(c0, time_points, n_species, n, D, beta, gamma, f_args,
-                    hx, hy, dt0, tol, s_min, s_max, h_min):
+    def rkf45_solve(
+        c0,
+        time_points,
+        n_species,
+        n,
+        D,
+        beta,
+        gamma,
+        f_args,
+        hx,
+        hy,
+        dt0,
+        tol,
+        s_min,
+        s_max,
+        h_min,
+    ):
 
         # Total number of data for each time point
         n_tot = n_species * n[0] * n[1]
@@ -621,26 +816,41 @@ def make_rkf45_numba(c0, time_points, n_species, n, D, beta, gamma, f, f_args,
         while i < i_max:
             while t < time_points[i]:
                 y_0, t, h = rkf45_step_numba(
-                        y_0, t, D, beta, gamma, hx, hy, f_args, h, tol, s_min,
-                        s_max, h_min)
+                    y_0, t, D, beta, gamma, hx, hy, f_args, h, tol, s_min, s_max, h_min
+                )
             if t > t_sol[-1]:
                 y = np.concatenate((y, y_0.flatten().reshape((1, n_tot))))
                 t_sol = np.concatenate((t_sol, np.array([t])))
             i += 1
             if np.isnan(y_0).any():
-                raise RuntimeError('Solution blew up! Try reducing dt.')
+                raise RuntimeError("Solution blew up! Try reducing dt.")
 
         return t_sol, y
 
     return rkf45_solve
 
 
-def rkf45_numba(c0, time_points, n_species, n, D, beta, gamma, f, f_args,
-                L, dt0, tol=1e-7, s_bounds=(0.1, 10.0), h_min=0.0):
+def rkf45_numba(
+    c0,
+    time_points,
+    n_species,
+    n,
+    D,
+    beta,
+    gamma,
+    f,
+    f_args,
+    L,
+    dt0,
+    tol=1e-7,
+    s_bounds=(0.1, 10.0),
+    h_min=0.0,
+):
     """
     """
 
     if f is None:
+
         @numba.jit(nopython=True, cache=True)
         def f(x, t):
             return 0.0
@@ -653,15 +863,47 @@ def rkf45_numba(c0, time_points, n_species, n, D, beta, gamma, f, f_args,
     s_min, s_max = s_bounds
 
     # Make Numba'd func
-    rkf45_solve = make_rkf45_numba(c0, time_points, n_species, n, D, beta,
-                gamma, f, f_args, hx, hy, dt0, tol, s_min, s_max, h_min)
+    rkf45_solve = make_rkf45_numba(
+        c0,
+        time_points,
+        n_species,
+        n,
+        D,
+        beta,
+        gamma,
+        f,
+        f_args,
+        hx,
+        hy,
+        dt0,
+        tol,
+        s_min,
+        s_max,
+        h_min,
+    )
 
     # Solve
-    t_sol, y = rkf45_solve(c0, time_points, n_species, n, D, beta, gamma,
-                           f_args, hx, hy, dt0, tol, s_min, s_max, h_min)
+    t_sol, y = rkf45_solve(
+        c0,
+        time_points,
+        n_species,
+        n,
+        D,
+        beta,
+        gamma,
+        f_args,
+        hx,
+        hy,
+        dt0,
+        tol,
+        s_min,
+        s_max,
+        h_min,
+    )
 
-    y_interp = utils.interpolate_solution(np.array(y).transpose(),
-                                          np.array(t_sol), time_points)
+    y_interp = utils.interpolate_solution(
+        np.array(y).transpose(), np.array(t_sol), time_points
+    )
 
     return y_interp.reshape((n_species, *n, len(time_points)))
 
@@ -678,8 +920,8 @@ def _check_and_update_inputs(c0, L, D, beta, gamma, f, f_args):
     n = _check_n_gridpoints(n)
 
     # Check D, beta, gamma for consistency
-    D = _check_beta_D(D, n_species, name='D')
-    beta = _check_beta_D(beta, n_species, name='beta')
+    D = _check_beta_D(D, n_species, name="D")
+    beta = _check_beta_D(beta, n_species, name="beta")
     gamma = _check_gamma(gamma, n_species)
 
     # Perform further checks and updates
@@ -687,10 +929,8 @@ def _check_and_update_inputs(c0, L, D, beta, gamma, f, f_args):
     L = _check_L(L)
 
     # At least one of D, beta, gamma, or f must not be None
-    if (D == 0.0).all() and (beta == 0.0).all() \
-            and (gamma == 0.0).all() and f is None:
-        raise RuntimeError(
-                'At least one of D, beta, gamma, and f must be nonzero.')
+    if (D == 0.0).all() and (beta == 0.0).all() and (gamma == 0.0).all() and f is None:
+        raise RuntimeError("At least one of D, beta, gamma, and f must be nonzero.")
 
     return c0, n_species, n, L, D, beta, gamma, f_args
 
@@ -708,11 +948,11 @@ def _check_and_update_c0(c0):
         c0 = np.array([c0])
 
     if len(c0.shape) != 3:
-        raise RuntimeError('c0 must be an n_species by nx by ny numpy array')
+        raise RuntimeError("c0 must be an n_species by nx by ny numpy array")
 
     # Make sure all concentrations are nonnegative
     if (c0 < 0).any():
-        raise RuntimeError('All entries in c0 must be nonnegative.')
+        raise RuntimeError("All entries in c0 must be nonnegative.")
 
     # Determine number of species.
     n_species = c0.shape[0]
@@ -723,7 +963,7 @@ def _check_and_update_c0(c0):
     return c0, n_species, n
 
 
-def _check_beta_D(x, n_species, name='beta and D arrays'):
+def _check_beta_D(x, n_species, name="beta and D arrays"):
     if x is None:
         return np.zeros(n_species)
 
@@ -735,11 +975,11 @@ def _check_beta_D(x, n_species, name='beta and D arrays'):
         x = np.array(x)
 
     if len(x.shape) != 1:
-        raise RuntimeError(f'{name} must be a one-dimensional array.')
+        raise RuntimeError(f"{name} must be a one-dimensional array.")
 
     # Make sure arrays have proper length
     if len(x) != n_species:
-        raise RuntimeError(f'len({name}) must equal c0.shape[0].')
+        raise RuntimeError(f"len({name}) must equal c0.shape[0].")
 
     # Make sure it is a float
     x = x.astype(float)
@@ -758,7 +998,7 @@ def _check_gamma(x, n_species):
     x = np.array(x, dtype=np.float)
 
     if x.shape != (n_species, n_species):
-        raise RuntimeError('gamma must be an n_species x n_species array.')
+        raise RuntimeError("gamma must be an n_species x n_species array.")
 
     return x
 
@@ -772,15 +1012,15 @@ def _check_n_gridpoints(n):
         n = tuple(n)
 
     if type(n) != tuple or len(n) != 2:
-        raise RuntimeError('`n` must be a 2-tuple.')
+        raise RuntimeError("`n` must be a 2-tuple.")
 
     # Make sure the number of grid points are ints
     if type(n[0]) != int or type(n[1]) != int:
-        raise RuntimeError('Number of grid points must be integer.')
+        raise RuntimeError("Number of grid points must be integer.")
 
     # Make sure they are even
     if n[0] % 2 != 0 or n[1] % 2 != 0:
-        raise RuntimeError('Number of grid points must be even.')
+        raise RuntimeError("Number of grid points must be even.")
 
     return n
 
@@ -790,7 +1030,7 @@ def _check_f(f, f_args):
     Check arguments for reaction function.
     """
     if f is None and f_args is not None and f_args != ():
-        raise RuntimeError('f is None, but f_args are given.')
+        raise RuntimeError("f is None, but f_args are given.")
 
     if f_args is None or type(f_args) in [list, np.ndarray]:
         f_args = tuple()
@@ -802,12 +1042,12 @@ def _check_f(f, f_args):
         # Make sure there are no variable keyword args in f; no f(**kw).
         for key in f_params:
             if f_params[key].kind == inspect._ParameterKind.VAR_KEYWORD:
-                raise RuntimeError('f cannot accept **kwargs')
+                raise RuntimeError("f cannot accept **kwargs")
 
         # Make sure we have correct number of args
         if len(f_params) != len(f_args) + 2:
-            err_str = 'f must have call signature f(c, t, *args). '
-            err_str += 'Length of f_args and f signature mismatch.'
+            err_str = "f must have call signature f(c, t, *args). "
+            err_str += "Length of f_args and f signature mismatch."
             raise RuntimeError(err_str)
 
     return f_args
@@ -818,14 +1058,14 @@ def _check_L(L):
     Check physical lengths of domain.
     """
     if L is None:
-        return (2*np.pi, 2*np.pi)
+        return (2 * np.pi, 2 * np.pi)
 
     # Length must be 2-tuple
     if type(L) in [list, np.ndarray]:
         L = tuple(L)
 
     if type(L) != tuple or len(L) != 2:
-        raise RuntimeError('`L` must be a 2-tuple.')
+        raise RuntimeError("`L` must be a 2-tuple.")
 
     # Make sure the lengths are float
     return (float(L[0]), float(L[1]))
