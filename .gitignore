@@ -7,3 +7,4 @@ rdsolver.egg-info
 *.npy
 *.csv
 *.html
+__pycache__
