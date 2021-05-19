@@ -16,9 +16,9 @@ import bokeh.application.handlers
 import ipywidgets
 
 
-def display_notebook(time_points, c, frame_height=400):
+def display(time_points, c, frame_height=400, pyapp=False):
     """
-    Build display of results of RD simulation.
+    Display the solution to a 2D RD system
 
     Parameters
     ----------
@@ -32,14 +32,25 @@ def display_notebook(time_points, c, frame_height=400):
         Index 3: time coodinate
     frame_height : int, default 400
         Height of plot, in pixels.
+    pyapp : bool, default False
+        If True, return an instance of a Bokeh app that uses Python
+        to access the entries in the array c. This will reduce the
+        size of a notebook you may embed the plot in. If False, then
+        the display is rendered with a slider where all images are
+        preloaded and accessed with JavaScript callbacks.
 
-    Notes
-    -----
-    .. To display in a notebook hosted, e.g., at `localhost:8888`, do
-       `bokeh.io.show(display_notebook(time_points, c),
-                      notebook_url='localhost:8888')`
+    Returns
+    -------
+    output : Either Bokeh app or Bokeh layout
+        To display the output, use `bokeh.io.show(output)`.
     """
+    if pyapp:
+        return _display_app(time_points, c, frame_height=frame_height)
+    else:
+        return _display_js(time_points, c, frame_height=frame_height)
 
+
+def _display_js(time_points, c, frame_height=400):
     # If a single image, convert
     if len(c.shape) == 3:
         c = c.reshape((1, *c.shape))
@@ -65,52 +76,169 @@ def display_notebook(time_points, c, frame_height=400):
     # Set up figure with appropriate dimensions
     frame_width = int(m / n * frame_height)
 
-    def _plot_app(doc):
-        p = bokeh.plotting.figure(
-            frame_height=frame_height,
-            frame_width=frame_width,
-            x_range=[0, m],
-            y_range=[0, n],
-        )
+    # Build the plot
+    p = bokeh.plotting.figure(
+        frame_height=frame_height,
+        frame_width=frame_width,
+        x_range=[0, m],
+        y_range=[0, n],
+    )
 
-        # Add the image to the plot
+    # Build the images to display
+    if c.shape[0] == 1:
+        ims = np.moveaxis(c[0, :, :, :], [0, 1, 2], [1, 2, 0])
+        color = bokeh.models.LinearColorMapper(
+            bokeh.palettes.viridis(256), low=c_min[0], high=c_max[0]
+        )
+        disp_fun = p.image
+        disp_kwargs = dict(color_mapper=color)
+    else:
+        ims = [
+            _make_cmy_image(c[:, :, :, i], *c_max, *c_min) for i in range(c.shape[3])
+        ]
+        color = None
+        disp_fun = p.image_rgba
+        disp_kwargs = dict()
+
+    cds = bokeh.models.ColumnDataSource(dict(image=[ims[0]]))
+    disp_fun(image="image", x=0, y=0, dw=m, dh=n, source=cds, **disp_kwargs)
+
+    slider_format = bokeh.models.FuncTickFormatter(
+        args=dict(time_points=time_points),
+        code="return time_points[Math.round(tick)].toFixed(3)",
+    )
+
+    slider = bokeh.models.Slider(
+        start=0,
+        end=len(time_points) - 1,
+        value=0,
+        step=1,
+        title="time",
+        format=slider_format,
+    )
+
+    callback = bokeh.models.CustomJS(
+        args=dict(cds=cds, slider=slider, ims=ims, m=m, n=n),
+        code="""
+    // Extract data from source and sliders
+    let im = cds.data['image'];
+    let ind = slider.value;
+
+    let k = 0;
+    for (let i = 0; i < n; i++) {
+        for (let j = 0; j < m; j++) {
+            im[0][k] = ims[ind][i][j];
+            k++;
+        }
+    }
+
+    cds.change.emit()
+    """,
+    )
+
+    slider.js_on_change("value", callback)
+
+    layout = bokeh.layouts.column(
+        bokeh.layouts.row(bokeh.layouts.Spacer(width=10), slider), p
+    )
+
+    return layout
+
+
+def _display_app(time_points, c, frame_height=400):
+    """
+    Build display of results of RD simulation.
+
+    Parameters
+    ----------
+    time_points : ndarray
+        Time points where concentrations were sampled.
+    c : ndarray
+        Output of rd.solve(), a 4D array.
+        Index 0: Species
+        Index 1: x-coordinate
+        Index 2: y-coordinate
+        Index 3: time coodinate
+    frame_height : int, default 400
+        Height of plot, in pixels.
+
+    Notes
+    -----
+    .. To display in a notebook hosted, e.g., at `localhost:8888`, do
+       `bokeh.io.show(display_notebook(time_points, c),
+                      notebook_url='localhost:8888')`
+    """
+    # If a single image, convert
+    if len(c.shape) == 3:
+        c = c.reshape((1, *c.shape))
+    if len(c.shape) != 4:
+        raise RuntimeError("c must be n_species x nx x ny x n_time_points array.")
+
+    # Make sure number of time points matches concentration dimensions
+    if c.shape[3] != len(time_points):
+        raise RuntimeError("Number of time points must equal c.shape[3].")
+
+    # Determine maximal and minimal concentrations in each channel
+    c_max = c.max(axis=(1, 2, 3))
+    c_min = c.min(axis=(1, 2, 3))
+
+    # Add a dummy yellow channel if we have two species for convenience
+    if len(c_max) == 2:
+        c_max = np.concatenate((c_max, (0.0,)))
+        c_min = np.concatenate((c_min, (0.0,)))
+
+    # Get shape of domain
+    n, m = c.shape[1:3]
+
+    # Set up figure with appropriate dimensions
+    frame_width = int(m / n * frame_height)
+
+    p = bokeh.plotting.figure(
+        frame_height=frame_height,
+        frame_width=frame_width,
+        x_range=[0, m],
+        y_range=[0, n],
+    )
+
+    # Add the image to the plot
+    if c.shape[0] == 1:
+        color = bokeh.models.LinearColorMapper(
+            bokeh.palettes.viridis(256), low=c_min[0], high=c_max[0]
+        )
+        source = bokeh.models.ColumnDataSource(data={"image": [c[0, :, :, 0]]})
+        p.image(image="image", x=0, y=0, dw=m, dh=n, source=source, color_mapper=color)
+    else:
+        im_disp = _make_cmy_image(c[:, :, :, 0], *c_max, *c_min)
+        source = bokeh.models.ColumnDataSource(data={"image": [im_disp]})
+        p.image_rgba(image="image", x=0, y=0, dw=m, dh=n, source=source)
+
+    def _callback(attr, old, new):
+        i = np.searchsorted(time_points, slider.value)
+
         if c.shape[0] == 1:
-            color = bokeh.models.LinearColorMapper(
-                bokeh.palettes.viridis(256), low=c_min[0], high=c_max[0]
-            )
-            source = bokeh.models.ColumnDataSource(data={"image": [c[0, :, :, 0]]})
-            p.image(
-                image="image", x=0, y=0, dw=m, dh=n, source=source, color_mapper=color
-            )
+            im_disp = c[0, :, :, i]
         else:
-            im_disp = make_cmy_image(c[:, :, :, 0], *c_max, *c_min)
-            source = bokeh.models.ColumnDataSource(data={"image": [im_disp]})
-            p.image_rgba(image="image", x=0, y=0, dw=m, dh=n, source=source)
+            im_disp = _make_cmy_image(c[:, :, :, i], *c_max, *c_min)
 
-        def _callback(attr, old, new):
-            i = np.searchsorted(time_points, slider.value)
+        source.data = {"image": [im_disp]}
 
-            if c.shape[0] == 1:
-                im_disp = c[0, :, :, i]
-            else:
-                im_disp = make_cmy_image(c[:, :, :, i], *c_max, *c_min)
+    slider = bokeh.models.Slider(
+        start=time_points[0],
+        end=time_points[-1],
+        value=time_points[0],
+        step=1 / len(time_points) * (time_points[1] - time_points[0]),
+        title="time",
+    )
+    slider.on_change("value", _callback)
 
-            source.data = {"image": [im_disp]}
+    layout = bokeh.layouts.column(
+        bokeh.layouts.row(bokeh.layouts.Spacer(width=10), slider), p
+    )
 
-        slider = bokeh.models.Slider(
-            start=time_points[0],
-            end=time_points[-1],
-            value=time_points[0],
-            step=1 / len(time_points) * (time_points[1] - time_points[0]),
-            title="time",
-        )
-        slider.on_change("value", _callback)
+    def _app(doc):
+        doc.add_root(layout)
 
-        # Add the plot to the app
-        doc.add_root(bokeh.layouts.column(p, slider))
-
-    handler = bokeh.application.handlers.FunctionHandler(_plot_app)
-    return bokeh.application.Application(handler)
+    return _app
 
 
 def display_single_frame(c, i=-1, frame_height=400):
@@ -168,12 +296,12 @@ def display_single_frame(c, i=-1, frame_height=400):
         color = bokeh.models.LinearColorMapper(bokeh.palettes.viridis(256))
         p.image(image=[c[0, :, :, i]], x=0, y=0, dw=m, dh=n, color_mapper=color)
     else:
-        p.image_rgba(image=[make_cmy_image(c[:, :, :, i])], x=0, y=0, dw=m, dh=n)
+        p.image_rgba(image=[_make_cmy_image(c[:, :, :, i])], x=0, y=0, dw=m, dh=n)
 
     return p
 
 
-def make_cmy_image(
+def _make_cmy_image(
     c,
     im_cyan_max=None,
     im_mag_max=None,
@@ -187,7 +315,7 @@ def make_cmy_image(
     """
 
     if c.shape[0] == 2:
-        im = im_merge_cmy(
+        im = _im_merge_cmy(
             c[0, :, :],
             c[1, :, :],
             None,
@@ -199,7 +327,7 @@ def make_cmy_image(
             im_yell_min,
         )
     elif c.shape[0] == 3:
-        im = im_merge_cmy(
+        im = _im_merge_cmy(
             c[0, :, :],
             c[1, :, :],
             c[2, :, :],
@@ -213,10 +341,10 @@ def make_cmy_image(
     else:
         raise RuntimeError("Too many channels. Select up to three to display.")
 
-    return rgb_to_rgba32(im)
+    return _rgb_to_rgba32(im)
 
 
-def im_merge_cmy(
+def _im_merge_cmy(
     im_cyan,
     im_mag,
     im_yell=None,
@@ -311,7 +439,7 @@ def im_merge_cmy(
     return im_rgb
 
 
-def rgb_to_rgba32(im):
+def _rgb_to_rgba32(im):
     """
     Convert an RGB image to a 32 bit-encoded RGBA image.
 
@@ -350,7 +478,7 @@ def rgb_to_rgba32(im):
     return np.flipud(im_rgba.view(dtype=np.int32).reshape((n, m)))
 
 
-def interpolate_2d(a, n_interp_points=(200, 200)):
+def _interpolate_2d(a, n_interp_points=(200, 200)):
     """
     Interplate a 2D array.
 
@@ -405,6 +533,6 @@ def interpolate_concs(c, n_interp_points=(200, 200)):
     # Interpolate each species for each time point.
     for i in range(c.shape[-1]):
         for j in range(c.shape[0]):
-            c_interp[j, :, :, i] = interpolate_2d(c[j, :, :, i], n_interp_points)
+            c_interp[j, :, :, i] = _interpolate_2d(c[j, :, :, i], n_interp_points)
 
     return c_interp

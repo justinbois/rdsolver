@@ -428,7 +428,72 @@ def solve(
     solver=vsimex_2d,
 ):
     """
-    Solve a reaction-diffusion system in two-dimensions.
+    Solve a reaction-diffusion system in two-dimensions. The RD system
+    is represented as
+    dt c_i = D_i (dx^2, dy^2)c_i + beta_i + sum(gamma_ij * c_j) + f_i(c)
+    where f_i(c) contains only nonlinear functions of the concentrations
+    c.
+
+    Parameters
+    ----------
+    c0 : array, shape (n_species, nx, ny)
+        Initial concentrations of all species at each point on an nx by
+        ny grid.
+    time_points : array, shape (n_time_points, )
+        The time points at which to store the solution.
+    D : array, shape (n_species, )
+        Diffusion coefficients for each species
+    beta : array, shape (n_species, )
+        Constant production rate of each species.
+    gamma : array, shape (n_species, n_species)
+        Matrix for the terms linear in the concentrations in the
+        reaction-diffusion PDEs.
+    f : function
+        Function with call signature f(c, t, *f_args) containing the
+        nonlinear terms in the reaction-diffusion PDEs. Must return
+        an array of shape (n_species, ).
+    f_args : tuple
+        Additional arguments to pass to f.
+    L : 2-tuple
+        Length of each side of the domain on which the
+        reaction-diffusion system is solved.
+    diff_multiplier : array, shape (nx, ny), default None
+        Array to multiply the FFT to differentiate with periodic BCs
+        using spectral differentiation. This is seldom set by the user,
+        but is calculated automatically from other inputted parameters.
+    dt0 : float, default 1e-6
+        Initial temporal step size.
+    dt_bounds : 2-tuple, default (0.000001, 100.0)
+        Minimum and maximum allowed temporal step size.
+    allow_negative : bool, default False
+        If True, allow for negative concentration values. If False, step
+        size will be adjusted down if any concentrations dip below zero.
+    vsimex_tol : float, default 0.001
+        A step is rejected if the relative error is greater than
+        vsimex_tol * (1.0 + vsimex_tol_buffer).
+    vsimex_tol_buffer : float, default 0.01
+        A step is rejected if the relative error is greater than
+        vsimex_tol * (1.0 + vsimex_tol_buffer).
+    k_P : float, default 0.075
+        k_P parameter for PID controller controlling step size based on
+        error.
+    k_I : float, default 0.175
+        k_I parameter for PID controller controlling step size based on
+        error.
+    k_D : float, default 0.01
+        k_D parameter for PID controller controlling step size based on
+        error.
+    s_bounds : 2-tuple, default (0.1, 10.0)
+        Lower and upper bound on multiplier for step size adjustment.
+    quiet : bool, default False
+        If True, suppress printed message to the screen.
+    solver : function, default rdsolver.vsimex
+        Solver to use. My be `rdsolver.vsimex` or `rdsolver.rkf45_numba`
+
+    Returns
+    -------
+    output : array, shape (n_species, nx, ny, n_time_points)
+        The concentrations at each grid point for each time point.
     """
     # Check and convert inputs
     c0, n_species, n, L, D, beta, gamma, f_args = _check_and_update_inputs(
