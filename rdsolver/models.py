@@ -60,7 +60,7 @@ def asdm(
     beta = np.array([sigma_a, sigma_s])
     gamma = np.diag([-mu_a, 0.0])
 
-    @numba.jit(nopython=True)
+    @numba.njit
     def f(c, t, rho_a, rho_s, kappa_a):
         a = c[0, :, :]
         s = c[1, :, :]
@@ -107,13 +107,13 @@ def asdm_switch(
     D = np.array([D_a, D_s, D_y])
 
     gamma = np.array(
-        [[-mu_a, 0, 0], [0, -mu_s, 0], [sigma_y, 0, -mu_y]], dtype=np.float
+        [[-mu_a, 0, 0], [0, -mu_s, 0], [sigma_y, 0, -mu_y]], dtype=float
     )
 
     if kappa_s == 0:
-        beta = np.array([sigma_a, sigma_s, 0.0], dtype=np.float)
+        beta = np.array([sigma_a, sigma_s, 0.0], dtype=float)
 
-        @numba.jit(nopython=True)
+        @numba.njit
         def f(c, t, rho_a, rho_s, rho_y, sigma_s, sigma_y, kappa_a, kappa_y):
             a = c[0, :, :]
             s = c[1, :, :]
@@ -130,7 +130,7 @@ def asdm_switch(
     else:
         beta = np.array([sigma_a, 0, 0])
 
-        @numba.jit(nopython=True)
+        @numba.njit
         def f(c, t, rho_a, rho_s, rho_y, sigma_s, sigma_y, kappa_a, kappa_s, kappa_y):
             a = c[0, :, :]
             s = c[1, :, :]
@@ -171,7 +171,7 @@ def min_system(
 
     D = np.array([D_D, D_E, D_d, D_de])
 
-    @numba.jit(nopython=True)
+    @numba.njit
     def f(c, t, omega_D, omega_E, omega_dD, omega_eE, omega_de):
         c_D = c[0, :, :]
         c_E = c[1, :, :]
@@ -191,7 +191,7 @@ def min_system(
 
     f_args = (omega_D, omega_E, omega_dD, omega_eE, omega_de)
 
-    beta = np.zeros(4, dtype=np.float)
+    beta = np.zeros(4, dtype=float)
     gamma = np.array(
         [
             [-omega_D, 0, 0, omega_de],
@@ -199,7 +199,7 @@ def min_system(
             [omega_D, 0, 0, 0],
             [0, 0, 0, -omega_de],
         ],
-        dtype=np.float,
+        dtype=float,
     )
 
     return D, beta, gamma, f, f_args, None

@@ -4,16 +4,12 @@ import warnings
 import numpy as np
 import scipy.interpolate
 
-import skimage
-
 import bokeh.io
 import bokeh.layouts
 import bokeh.models
 import bokeh.plotting
 import bokeh.application
 import bokeh.application.handlers
-
-import ipywidgets
 
 
 def display(time_points, c, frame_height=400, pyapp=False):
@@ -103,7 +99,7 @@ def _display_js(time_points, c, frame_height=400):
     cds = bokeh.models.ColumnDataSource(dict(image=[ims[0]]))
     disp_fun(image="image", x=0, y=0, dw=m, dh=n, source=cds, **disp_kwargs)
 
-    slider_format = bokeh.models.FuncTickFormatter(
+    slider_format = bokeh.models.CustomJSTickFormatter(
         args=dict(time_points=time_points),
         code="return time_points[Math.round(tick)].toFixed(3)",
     )
@@ -121,18 +117,12 @@ def _display_js(time_points, c, frame_height=400):
         args=dict(cds=cds, slider=slider, ims=ims, m=m, n=n),
         code="""
     // Extract data from source and sliders
-    let im = cds.data['image'];
-    let ind = slider.value;
+    let im = cds.data['image'][0];
+    let new_im = ims[slider.value];
 
-    let k = 0;
-    for (let i = 0; i < n; i++) {
-        for (let j = 0; j < m; j++) {
-            im[0][k] = ims[ind][i][j];
-            k++;
-        }
-    }
+    for (let i = 0; i < n * m; i++) im[i] = new_im[i];
 
-    cds.change.emit()
+    cds.change.emit();
     """,
     )
 
@@ -465,9 +455,7 @@ def _rgb_to_rgba32(im):
     n, m, _ = im.shape
 
     # Convert to 8-bit, which is expected for viewing
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        im_8 = skimage.img_as_ubyte(im)
+    im_8 = np.round(im * 255).astype(np.uint8)
 
     # Add the alpha channel, which is expected by Bokeh
     im_rgba = np.stack(
@@ -475,7 +463,7 @@ def _rgb_to_rgba32(im):
     )
 
     # Reshape into 32 bit. Must flip up/down for proper orientation
-    return np.flipud(im_rgba.view(dtype=np.int32).reshape((n, m)))
+    return np.flipud(im_rgba.view(dtype=np.uint32).reshape((n, m)))
 
 
 def _interpolate_2d(a, n_interp_points=(200, 200)):

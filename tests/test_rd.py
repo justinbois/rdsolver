@@ -5,22 +5,22 @@ import rdsolver as rd
 import rdsolver.rd
 
 def test_multiply_gamma():
-    c = np.array([[[1, 2],[3, 4]]], dtype=np.float)
-    gamma = np.array([[1]], dtype=np.float)
+    c = np.array([[[1, 2],[3, 4]]], dtype=float)
+    gamma = np.array([[1]], dtype=float)
     assert np.isclose(rdsolver.rd._multiply_gamma(gamma, c), c).all
 
-    c = np.array([[[1, 2],[3, 4]], [[1, 2],[3, 4]]], dtype=np.float)
-    gamma = np.array([[1, 0], [0, 1]], dtype=np.float)
+    c = np.array([[[1, 2],[3, 4]], [[1, 2],[3, 4]]], dtype=float)
+    gamma = np.array([[1, 0], [0, 1]], dtype=float)
     assert np.isclose(rdsolver.rd._multiply_gamma(gamma, c), c).all
 
-    c = np.array([[[1, 0],[0, 1]], [[1, 0],[0, 1]]], dtype=np.float)
-    gamma = np.array([[1, 2], [3, 4]], dtype=np.float)
-    correct = np.array([[[3, 0],[0, 3]], [[7, 0],[0, 7]]], dtype=np.float)
+    c = np.array([[[1, 0],[0, 1]], [[1, 0],[0, 1]]], dtype=float)
+    gamma = np.array([[1, 2], [3, 4]], dtype=float)
+    correct = np.array([[[3, 0],[0, 3]], [[7, 0],[0, 7]]], dtype=float)
     assert np.isclose(rdsolver.rd._multiply_gamma(gamma, c), correct).all()
 
-    c = np.array([[[1, 2],[3, 4]], [[1, 2],[3, 4]]], dtype=np.float)
-    gamma = np.array([[1, 2], [3, 4]], dtype=np.float)
-    correct = np.array([[[3, 6],[9, 12]], [[7, 14],[21, 28]]], dtype=np.float)
+    c = np.array([[[1, 2],[3, 4]], [[1, 2],[3, 4]]], dtype=float)
+    gamma = np.array([[1, 2], [3, 4]], dtype=float)
+    correct = np.array([[[3, 6],[9, 12]], [[7, 14],[21, 28]]], dtype=float)
     assert np.isclose(rdsolver.rd._multiply_gamma(gamma, c), correct).all()
 
 

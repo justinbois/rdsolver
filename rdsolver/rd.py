@@ -271,7 +271,7 @@ def vsimex_2d(
     n_tot = n[0] * n[1]
 
     # Make sure gamma is a float for RKF stepping
-    gamma = gamma.astype(np.float)
+    gamma = gamma.astype(float)
 
     # Tiny concentration
     tiny_conc = 1e-9
@@ -1060,7 +1060,7 @@ def _check_gamma(x, n_species):
         x = np.array([[x]])
 
     # Make sure it's a numpy array
-    x = np.array(x, dtype=np.float)
+    x = np.array(x, dtype=float)
 
     if x.shape != (n_species, n_species):
         raise RuntimeError("gamma must be an n_species x n_species array.")
